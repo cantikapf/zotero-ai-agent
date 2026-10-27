@@ -1,0 +1,26 @@
+{
+  "name": "zotero-ai-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Ultra-lightweight AI Agent plugin for Zotero 7 with 9router, Hermes Agent, and ZotLit integration",
+  "main": "dist/bootstrap.js",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.js"
+  },
+  "keywords": [
+    "zotero",
+    "zotero-plugin",
+    "ai-agent",
+    "hermes-agent",
+    "zotlit",
+    "9router",
+    "obsidian"
+  ],
+  "author": "Cantikaputri Febrianti <cantikapf.7@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

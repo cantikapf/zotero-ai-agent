@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build artifacts
+dist/
+build/
+*.xpi
+*.zip
+
+# Environment & credentials
+.env
+.env.*
+*.local
+
+# Cache and logs
+*.log
+npm-debug.log*
+.eslintcache
+.turbo/
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
