@@ -7,7 +7,7 @@
   "applications": {
     "zotero": {
       "id": "zotero-ai-agent@cantikapf.github.io",
-      "update_url": "https://raw.githubusercontent.com/cantikapf/zotero-ai-agent/main/updates.json",
+      "update_url": "https://raw.githubusercontent.com/cantikapf/zotero-ai-agent/master/updates.json",
       "strict_min_version": "6.999",
       "strict_max_version": "7.0.*"
     }
