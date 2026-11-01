@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zotero AI Agent",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Ultra-lightweight AI Agent plugin for Zotero 7 with 9router and Hermes integration",
   "author": "Cantikaputri Febrianti",
   "applications": {

@@ -1,6 +1,6 @@
 {
   "name": "zotero-ai-agent",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "type": "module",
   "description": "Ultra-lightweight AI Agent plugin for Zotero 7 with 9router, Hermes Agent, and ZotLit integration",
   "main": "dist/bootstrap.js",
