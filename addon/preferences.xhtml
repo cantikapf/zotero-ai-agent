@@ -1,0 +1,85 @@
+<!-- Loaded by Zotero.PreferencePanes.register as an XHTML *fragment* (not a document).
+     Zotero parses it with MozXULElement.parseXULToFragment (XUL is the default namespace),
+     so no <?xml?> prolog and HTML tags must carry the html: prefix.
+     `preference="<full pref key>"` is bound by chrome/content/zotero/preferences/preferences.js
+     (_syncFromPref/_syncToPrefOnModify), so no JS is needed for load/save. -->
+<vbox>
+  <groupbox>
+    <label><html:h2>LLM Gateway</html:h2></label>
+    <description>Where the AI answers come from. Defaults point at a local 9router instance.</description>
+    <hbox align="center">
+      <label control="zaa-baseUrl" flex="1">Base URL</label>
+      <html:input id="zaa-baseUrl" type="text" style="width: 30em"
+                  placeholder="http://127.0.0.1:20128/v1"
+                  preference="extensions.zotero-ai-agent.baseUrl"/>
+    </hbox>
+    <hbox align="center">
+      <label control="zaa-model" flex="1">Model</label>
+      <html:input id="zaa-model" type="text" style="width: 30em"
+                  placeholder="ag/gemini-3.8-flash"
+                  preference="extensions.zotero-ai-agent.model"/>
+    </hbox>
+    <hbox align="center">
+      <label control="zaa-apiKey" flex="1">API key</label>
+      <html:input id="zaa-apiKey" type="password" style="width: 30em"
+                  preference="extensions.zotero-ai-agent.apiKey"/>
+    </hbox>
+    <description>Stored in Zotero preferences only. Never written to a file, a log, or this repository.</description>
+  </groupbox>
+
+  <groupbox>
+    <label><html:h2>Answers</html:h2></label>
+    <hbox align="center">
+      <label control="zaa-language" flex="1">Answer language</label>
+      <html:input id="zaa-language" type="text" style="width: 12em"
+                  placeholder="English"
+                  preference="extensions.zotero-ai-agent.answerLanguage"/>
+    </hbox>
+    <description>Leave empty for English. Any language name works (e.g. Indonesian, Japanese).</description>
+    <hbox align="center">
+      <label control="zaa-contextChars" flex="1">Context budget (characters)</label>
+      <html:input id="zaa-contextChars" type="number" min="1000" max="200000" step="1000"
+                  style="width: 10em"
+                  placeholder="8000"
+                  preference="extensions.zotero-ai-agent.contextChars"/>
+    </hbox>
+    <description>How much of the page goes to the model per question. Empty means 8000 (~2,000 tokens).
+      Larger costs more gateway tokens; smaller truncates the excerpt sooner.</description>
+  </groupbox>
+
+  <groupbox>
+    <label><html:h2>External references</html:h2></label>
+    <checkbox id="zaa-useExternalSources" label="Allow DOI-verified references from the web"
+              preference="extensions.zotero-ai-agent.useExternalSources"/>
+    <description>When on, the panel offers a per-question "Add references from the web" checkbox.
+      References come from Crossref and always carry a resolvable DOI; nothing is invented. The
+      paper you are reading is still the primary source, and answers say when the paper alone was
+      enough.</description>
+  </groupbox>
+
+  <groupbox>
+    <label><html:h2>Obsidian export</html:h2></label>
+    <hbox align="center">
+      <label control="zaa-exportDir" flex="1">Export folder (absolute path)</label>
+      <html:input id="zaa-exportDir" type="text" style="width: 30em"
+                  placeholder="D:\\Obsidian\\Vault\\Zotero"
+                  preference="extensions.zotero-ai-agent.obsidianExportDir"/>
+    </hbox>
+    <description>Folder inside your Obsidian vault. When set, each answer offers "Export to Obsidian",
+      which writes <html:code>AI Discussions - &lt;itemKey&gt;.md</html:code> with ZotLit frontmatter
+      (<html:code>zotero-key</html:code>) plus a deep link back to the PDF page. Later answers append a
+      new section instead of replacing the file. Empty hides the button.</description>
+  </groupbox>
+
+  <groupbox>
+    <label><html:h2>Hermes Bridge</html:h2></label>
+    <hbox align="center">
+      <label control="zaa-bridgeToken" flex="1">Access token (optional)</label>
+      <html:input id="zaa-bridgeToken" type="password" style="width: 30em"
+                  preference="extensions.zotero-ai-agent.bridgeToken"/>
+    </hbox>
+    <description>Empty keeps the bridge open to local processes. When set, requests to
+      /agent-bridge/active and /agent-bridge/chat need an Authorization: Bearer header with this
+      token; otherwise 401.</description>
+  </groupbox>
+</vbox>
