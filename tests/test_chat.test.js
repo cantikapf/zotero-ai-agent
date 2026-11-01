@@ -21,7 +21,7 @@ ${params.userQuestion}` }
       ];
     },
     streamChatCompletion: async (messages, config, onChunk, signal, collect) => {
-      seenConfig = { config, collect, count: messages.length };
+      seenConfig = { config, collect, count: messages.length, signal };
       return "Grounded answer, p.3";
     },
     config: { baseUrl: "http://stub/v1", model: "ag/gemini-3.8-flash" },
@@ -209,5 +209,20 @@ describe("bridge chat route", () => {
     const result = await server.handleRequest(ACTIVE_SESSION_PATH);
     assert.equal(result.status, 200);
     assert.equal(result.body.itemKey, "HCS9BRGQ");
+  });
+});
+/** The panel's Stop button only works if the token survives the trip from UI to stream. */
+describe("cancellation pass-through", () => {
+  it("hands the cancel token to the stream unchanged", async () => {
+    const token = { cancelled: false };
+    await answerFromSession(SESSION, "What is the main claim?", deps(), () => {}, {
+      cancelToken: token
+    });
+    assert.equal(seenConfig.signal, token, "same object, so flipping it is seen by the stream");
+  });
+
+  it("passes nothing when the caller has no token", async () => {
+    await answerFromSession(SESSION, "What is the main claim?", deps());
+    assert.equal(seenConfig.signal, undefined);
   });
 });

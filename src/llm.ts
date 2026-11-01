@@ -132,13 +132,31 @@ export function buildViewportPrompt(params: {
 }
 
 /**
+ * Cooperative cancellation for environments without AbortController — Zotero's bootstrap
+ * sandbox ships neither it nor AbortSignal (plugins.js `wantGlobalProperties`), so the panel
+ * passes a plain token instead: flip `cancelled` and the stream stops at the next chunk.
+ */
+export interface CancelToken {
+  cancelled: boolean;
+}
+
+function isCancelled(signal?: AbortSignal | CancelToken): boolean {
+  if (!signal) return false;
+  return "aborted" in signal ? signal.aborted : signal.cancelled;
+}
+
+function abortError(): Error {
+  return Object.assign(new Error("cancelled"), { name: "AbortError" });
+}
+
+/**
  * Streams LLM completion tokens via Server-Sent Events (SSE) without large string buffering.
  */
 export async function streamChatCompletion(
   messages: LLMMessage[],
   config: LLMConfig = DEFAULT_CONFIG,
   onChunk: (delta: string) => void,
-  signal?: AbortSignal,
+  signal?: AbortSignal | CancelToken,
   /** ponytail: off by default so the stream is not buffered; pass true when the caller needs
    *  the assembled answer (e.g. export). */
   collect = false
@@ -162,7 +180,8 @@ export async function streamChatCompletion(
       max_tokens: config.maxTokens ?? 1024,
       temperature: config.temperature ?? 0.2
     }),
-    signal
+    // fetch only understands a real AbortSignal; a plain token is checked per chunk instead.
+    signal: signal && "aborted" in signal ? signal : undefined
   });
 
   if (!response.ok) {
@@ -184,6 +203,12 @@ export async function streamChatCompletion(
   let finished = false;
 
   while (!finished) {
+    // Checked between chunks: without AbortSignal a read already in flight cannot be interrupted,
+    // so a stop lands on the next delta rather than instantly.
+    if (isCancelled(signal)) {
+      try { await reader.cancel(); } catch { /* stream already closed */ }
+      throw abortError();
+    }
     const { done, value } = await reader.read();
     if (done) break;
 

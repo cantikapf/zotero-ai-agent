@@ -154,3 +154,82 @@ describe("buildViewportPrompt context cap", () => {
     assert.ok(!messages[1].content.includes("truncated"));
   });
 });
+/**
+ * The panel cannot pass an AbortSignal (Zotero's bootstrap sandbox has no AbortController), so it
+ * passes a plain token. Cancelling must stop the stream and reject, not return a half answer.
+ */
+describe("cancellation through a plain token", () => {
+  const chunk = (text) =>
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+
+  test("stops at the next chunk and rejects with AbortError", async () => {
+    const token = { cancelled: false };
+    const seen = [];
+    let cancelledStream = false;
+    const chunks = [chunk("one "), chunk("two "), chunk("three")];
+    let i = 0;
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (i >= chunks.length) return { done: true, value: undefined };
+            const value = new TextEncoder().encode(chunks[i++]);
+            // Stop arrives while the first delta is being consumed.
+            if (i === 1) token.cancelled = true;
+            return { done: false, value };
+          },
+          cancel: async () => { cancelledStream = true; }
+        })
+      }
+    });
+
+    await assert.rejects(
+      () =>
+        streamChatCompletion(
+          [{ role: "user", content: "hi" }],
+          { baseUrl: "http://x/v1", model: "m" },
+          (d) => seen.push(d),
+          token,
+          true
+        ),
+      /cancelled/
+    );
+    assert.deepEqual(seen, ["one "], "no delta is delivered after the stop");
+    assert.equal(cancelledStream, true, "the reader is cancelled, not just dropped");
+  });
+
+  test("an uncancelled token streams normally to the end", async () => {
+    const token = { cancelled: false };
+    const chunks = [chunk("a"), chunk("b")];
+    let i = 0;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: {
+        getReader: () => ({
+          read: async () =>
+            i >= chunks.length
+              ? { done: true, value: undefined }
+              : { done: false, value: new TextEncoder().encode(chunks[i++]) },
+          cancel: async () => {}
+        })
+      }
+    });
+
+    const seen = [];
+    const out = await streamChatCompletion(
+      [{ role: "user", content: "hi" }],
+      { baseUrl: "http://x/v1", model: "m" },
+      (d) => seen.push(d),
+      token,
+      true
+    );
+    assert.equal(out, "ab");
+    assert.deepEqual(seen, ["a", "b"]);
+  });
+});

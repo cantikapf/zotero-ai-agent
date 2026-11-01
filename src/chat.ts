@@ -26,6 +26,11 @@ export interface ChatOptions {
   contextChars?: number;
   /** Opt-in: look up DOI-validated references to supplement the paper's own text. */
   useExternalSources?: boolean;
+  /**
+   * Stop switch for the panel. Zotero's bootstrap sandbox has no AbortController, so cancellation
+   * travels as a plain flag the stream checks between chunks.
+   */
+  cancelToken?: { cancelled: boolean };
 }
 
 export interface ChatDeps {
@@ -45,7 +50,7 @@ export interface ChatDeps {
     messages: LLMMessage[],
     config: LLMConfig,
     onChunk: (delta: string) => void,
-    signal: AbortSignal | undefined,
+    signal: AbortSignal | { cancelled: boolean } | undefined,
     collect: boolean
   ) => Promise<string>;
   config: LLMConfig;
@@ -116,7 +121,13 @@ export async function answerFromSession(
 
   // collect = true so the caller also gets the assembled answer (the HTTP route returns one body,
   // the reader panel shows the stream).
-  const raw = await deps.streamChatCompletion(messages, deps.config, onChunk, undefined, true);
+  const raw = await deps.streamChatCompletion(
+    messages,
+    deps.config,
+    onChunk,
+    options.cancelToken,
+    true
+  );
 
   // Markers for references that do not exist are removed, and the bibliography is appended from
   // the records themselves. The streamed text already reached the panel, so the corrected version

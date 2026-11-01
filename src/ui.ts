@@ -28,7 +28,9 @@ export interface PanelHandlers {
     question: string,
     onChunk: (delta: string) => void,
     highlightKey?: string,
-    useExternalSources?: boolean
+    useExternalSources?: boolean,
+    /** Set `cancelled` to stop the stream; the panel's button does exactly that. */
+    cancelToken?: { cancelled: boolean }
   ) => Promise<{ answer: string; pageNumber: number; sources?: { title: string; url: string }[] }>;
   /** Current page label, or null when no PDF session is live. */
   pageLabel: () => Promise<string | null>;
@@ -280,10 +282,24 @@ export function createPanel(
   close.addEventListener("click", () => setOpen(false));
   panel.toggle = () => setOpen(panel.dataset.open !== "true");
 
+  // One button, two jobs: "Send" starts a question, "Stop" during the stream flips the token so
+  // the reader loop drops out at the next delta. A separate Stop button would need its own
+  // disabled/layout dance for the same result.
+  let activeToken: { cancelled: boolean } | null = null;
+
   const submit = async () => {
+    if (activeToken) {
+      activeToken.cancelled = true;
+      send.disabled = true;
+      status.textContent = "Stopping…";
+      return;
+    }
     const question = String(input.value || "").trim();
     if (!question && !activeHighlight) return;
-    send.disabled = true;
+    const token = { cancelled: false };
+    activeToken = token;
+    send.textContent = "Stop";
+    send.title = "Stop generating";
     answer.textContent = "";
     status.textContent = "Thinking…";
     saveHighlight.disabled = true;
@@ -300,7 +316,8 @@ export function createPanel(
           answer.innerHTML = renderMarkdownToHtml(raw);
         },
         activeHighlight,
-        useSources.checked
+        useSources.checked,
+        token
       );
       // The stream is only a preview: the returned answer is the corrected one — invented
       // citation markers removed, and the paper's own reference list appended from real records.
@@ -315,9 +332,19 @@ export function createPanel(
       saveNote.disabled = false;
       saveObsidian.disabled = false;
     } catch (error) {
-      status.textContent = error instanceof Error ? error.message : String(error);
-      answer.textContent = "";
+      // A stopped stream keeps the partial text on screen — it is what the reader saw and may
+      // still want — but never becomes a savable answer.
+      if (token.cancelled) {
+        status.textContent = "Stopped.";
+        if (!raw) answer.textContent = "";
+      } else {
+        status.textContent = error instanceof Error ? error.message : String(error);
+        answer.textContent = "";
+      }
     } finally {
+      activeToken = null;
+      send.textContent = "Send";
+      send.title = "Ask the AI about this page";
       send.disabled = false;
     }
   };

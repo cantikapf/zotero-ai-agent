@@ -7,6 +7,23 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { renderMarkdownToHtml } from "../src/markdown.ts";
 import { buildViewportPrompt } from "../src/llm.ts";
+import { registerHooks } from "node:module";
+
+// src/*.ts import each other with the ".js" extension that tsc emits, which type-stripping does
+// not resolve. Map it back to ".ts" so the panel can be exercised without a build step.
+registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier.startsWith(".") && specifier.endsWith(".js")) {
+      try {
+        return next(`${specifier.slice(0, -3)}.ts`, context);
+      } catch {
+        // fall through to the original specifier
+      }
+    }
+    return next(specifier, context);
+  }
+});
+const { createPanel } = await import("../src/ui.ts");
 
 describe("buildViewportPrompt external references", () => {
   const base = {
@@ -94,5 +111,86 @@ describe("prompt formatting contract", () => {
       userQuestion: "q"
     });
     assert.match(system.content, /Answer language: English/);
+  });
+});
+
+/**
+ * The Stop button lives entirely in the DOM, so it is checked against a stub document: no jsdom
+ * dependency, and the behaviour that matters (label swaps, second click cancels) is observable.
+ */
+function stubDoc() {
+  const el = (tag) => ({
+    tagName: tag,
+    children: [],
+    dataset: {},
+    style: {},
+    classList: { add() {}, remove() {} },
+    hidden: false,
+    disabled: false,
+    textContent: "",
+    innerHTML: "",
+    value: "",
+    checked: false,
+    title: "",
+    append(...kids) { this.children.push(...kids); },
+    appendChild(kid) { this.children.push(kid); return kid; },
+    addEventListener(type, fn) { (this.listeners ||= {})[type] = fn; },
+    removeEventListener() {},
+    setAttribute() {},
+    getAttribute() { return null; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    remove() {},
+    focus() {},
+    closest() { return null; }
+  });
+  return { createElement: el, head: el("head"), body: el("body"), documentElement: el("html"), getElementById: () => null };
+}
+
+/** Depth-first search so the test does not depend on element order. */
+function find(node, match) {
+  if (!node) return null;
+  if (match(node)) return node;
+  for (const kid of node.children || []) {
+    const hit = find(kid, match);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+describe("panel stop button", () => {
+  it("swaps to Stop while streaming and cancels on the second click", async () => {
+    const doc = stubDoc();
+    let captured;
+    let release;
+    const panel = createPanel(doc, {
+      ask: (question, onChunk, highlightKey, useSources, token) => {
+        captured = token;
+        return new Promise((resolve) => { release = resolve; });
+      },
+      pageLabel: async () => "p. 4",
+      highlights: async () => [],
+      saveAnswer: async () => "",
+      exportAnswer: async () => "",
+      canExport: () => false
+    });
+    assert.equal(panel.dataset.open, "false", "panel starts closed");
+
+    const input = find(panel, (n) => n.tagName === "textarea");
+    const send = find(panel, (n) => n.tagName === "button" && n.textContent === "Send");
+    assert.ok(input && send, "input and Send button exist");
+
+    input.value = "What is bifurcation bias?";
+    send.listeners.click();
+    await Promise.resolve();
+    assert.equal(send.textContent, "Stop", "button becomes Stop while in flight");
+    assert.equal(send.disabled, false, "Stop must stay clickable");
+
+    send.listeners.click();
+    assert.equal(captured.cancelled, true, "second click flips the token");
+
+    release({ answer: "done", pageNumber: 4 });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(send.textContent, "Send", "label restored after the stream ends");
   });
 });

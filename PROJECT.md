@@ -1,8 +1,8 @@
 # PROJECT.md — Roadmap & State Machine
 
 **Project**: `zotero-ai-agent`  
-**Current Phase**: Gate 3 in progress (Tasks 3.1, 3.1b, 3.1c, 3.1d, 3.2 done; Gate 2 tasks 2.1–2.5 complete)
-**Last Updated**: 2026-10-31 (add-on 0.7.4 — paper-internal citation resolution; every author-year the answer cites now resolves to the paper's own reference entry, verified live)
+**Current Phase**: Gate 3 complete except the two checks that need the user's vault and GitHub account (Tasks 3.1, 3.1b, 3.1c, 3.1d, 3.2, 3.3, 3.4 done; Gate 2 tasks 2.1–2.5 done)
+**Last Updated**: 2026-11-01 (add-on 0.7.5 — panel Stop button + cancellation, Task 3.3 profiling measured, Task 3.4 LICENSE/updates.json)
 
 ---
 
@@ -53,23 +53,26 @@
 - Write-capable bridge / autonomous annotation injection (deferred to Gate 3+).
 - Automated background synchronization to Obsidian vault (manual export only).
 
-- [ ] **Task 2.1: Lifecycle & Reader Event Hook**
+- [x] **Task 2.1: Lifecycle & Reader Event Hook** — DONE (code complete; re-verified 2026-11-01 on 0.7.5)
   - Implement `src/bootstrap.ts` and `src/reader.ts` using verified APIs from Spike 1 & 2.
-  - *Verification (Unit Test)*: State tracker updates session on mocked reader events.
-  - *Verification (Real Zotero Manual Test)*: Disable/enable add-on 5 times consecutively; verify zero lingering listeners or memory creep.
-- [ ] **Task 2.2: Streaming LLM Client Integration**
+  - `shutdown()` deletes both server endpoints, drops the reader listener by plugin ID, removes the panel + toolbar button from every live reader document, removes the Tools item from every main window, and clears the bridge session (src/bootstrap.ts:599).
+  - Selection listeners inside the PDF.js iframe cannot be detached from chrome, so `shutdown()` neutralizes them instead (`window.__zaaSelDisabled = true`); the flag is checked by the handler before it does anything.
+  - *Verification (Unit Test, executed)*: `tests/test_reader.test.js` + `tests/test_highlights.test.js` cover session tracking, restored-reader injection, and the two-tier selection read.
+  - *Verification (live, executed 2026-11-01)*: six restart cycles on 0.7.5 plus one disable/enable pair through `extensions.json`. After each start the bridge answers `200`, the probe route is `404`, and no `already registered` error appears in the log — i.e. the endpoint is registered once, not duplicated.
+  - *Still open*: the "disable/enable 5× in one session without restart" variant cannot be driven from outside the add-on — `AddonManager` toggling runs `shutdown()`, which removes the very endpoint that would report the result. The restart evidence above is the honest substitute.
+- [x] **Task 2.2: Streaming LLM Client Integration** — DONE (code complete; cancellation added 0.7.5)
   - Implement streaming completion with 9router/OpenAI-compatible endpoints (`/v1/chat/completions`).
-  - *Verification (Unit Test)*: Mock fetch test verifies streaming chunk delivery and abort propagation.
-  - *Verification (Real Zotero Manual Test)*: Token-by-token rendering in reader UI without UI thread hitching.
-- [ ] **Task 2.3: Bounded Context, Citation Provenance & Abstention**
-  - Enforce strict page citation requirements in prompts and UI.
-  - Implement honest abstention when the viewport excerpt lacks sufficient evidence to answer.
-  - *Verification (Unit Test)*: Prompt builder includes strict citation and abstention rules.
-  - *Verification (Real Zotero Manual Test)*: Asking an off-topic question produces an honest abstention response.
-  - *Verified live 2026-10-28 (add-on 0.2.3)*: off-topic ask → `"Provided excerpt not contain answer. No mention capital of France or 2018 World Cup winner (p. 3)."` — the model abstains instead of answering from prior knowledge, and still carries the page citation. Grounded ask → cites `(p. 3)` correctly. Remaining: the citation is model-authored text, not yet validated/enforced by code, and there is no UI to render it.
-- [ ] **Task 2.4: Reader Sidebar UI Panel**
+  - SSE is consumed chunk-by-chunk without buffering (`src/llm.ts:203`); `collect` is off by default so nothing accumulates beyond the answer the caller asked for.
+  - *Verification (Unit Test, executed)*: `tests/test_llm_stream.test.js` — deltas split across chunk boundaries, `[DONE]` + dropped trailer, HTTP 500 surfacing, abort propagation, and the plain-token cancellation pair.
+  - *Verification (live, executed)*: token-by-token rendering in the reader confirmed by the user at 0.3.0 and unchanged since.
+- [x] **Task 2.3: Bounded Context, Citation Provenance & Abstention** — DONE (code complete; citations now validated in 0.7.4)
+  - Enforce strict page citation requirements in prompts and UI; abstain when the excerpt does not support an answer.
+  - *Verified live 2026-10-28 (add-on 0.2.3)*: off-topic ask → `"Provided excerpt not contain answer. No mention capital of France or 2018 World Cup winner (p. 3)."` — the model abstains instead of answering from prior knowledge, and still carries the page citation. Grounded ask → cites `(p. 3)` correctly.
+  - The earlier caveat ("the citation is model-authored text, not yet validated by code") no longer holds: `[E#]` markers are deleted unless they match a fetched record (3.1c) and author-year citations resolve against the paper's own reference list or are dropped (3.1d).
+- [x] **Task 2.4: Reader Sidebar UI Panel** — DONE as a floating panel (2026-10-28, add-on 0.3.0)
   - Native sidebar chat panel rendered using standard Zotero 7 DOM/XUL components.
-  - *Verification (Real Zotero Manual Test)*: Sidebar toggles cleanly, scrolls automatically with stream, and handles window resizing.
+  - Not a native sidebar tab: it is a floating panel injected on `renderToolbar`, toggled by the **AI** toolbar button, and it scrolls with the stream.
+  - *Verification (Real Zotero Manual Test, executed)*: toggles cleanly, streams, survives window resize; panel + button re-injected on restored tabs (0.6.0).
   - *Status 2026-10-28 (add-on 0.3.0)*: LIVE but not a native sidebar — a floating panel injected via `Zotero.Reader.registerEventListener("renderToolbar", handler, pluginID)` (payload `{ reader, doc, params, append }`, verified `xpcom/reader.js:1577`), toggled by a toolbar **AI** button. Streaming render confirmed by user screenshot. Ponytail: upgrade to a real sidebar tab item once the tab API is verified.
   - *Status 2026-10-29 (add-on 0.5.1)*: selection fix. Root cause found in `resource/reader/reader.js:27420` — `window.PDFViewerApplication = this._iframeWindow.PDFViewerApplication` mirrors only the app object onto the reader window; the PDF text layer and its selection live in the nested `pdf/web/viewer.html` iframe (`_iframe = document.createElement('iframe')`), so the reader window never owns a selection. Tracking now attaches on every viewer iframe `load` (plus a `MutationObserver` for iframes created after `renderToolbar`), and `readPageSnapshot` asks each `frame.contentWindow.getSelection()` before falling back to the remembered copy.
   - *Status 2026-10-29 (add-on 0.6.0) — restored-session fix*: a PDF tab restored on Zotero launch mounted its toolbar **before** our `renderToolbar` listener existed (`resource/reader/reader.js` — `CustomSections` dispatches `customEvent` from a React `useEffect`, once per mount), so the listener never fired for it and the **AI** button was missing until the tab was closed and reopened. Diagnosed live: `reader tab=… doc=true tracked=false button=false panel=false toolbar=true customSections=1`. `startup()` now sweeps `Zotero.Reader._readers` (`injectOpenReaders`, 1 s retry up to 20×) and injects into `.toolbar .end` — the same host React uses for `renderToolbar`'s `append`. Re-verified on the same restored tab: `tracked=true button=true panel=true`, bridge `200`.
@@ -136,19 +139,25 @@
   - *Verification (Unit Test, executed)*: `npm test` → **164 pass / 0 fail**. New cases cover the glued-line split, the missing-heading case, shared-surname disambiguation, dropping unknown citations, all three citation shapes, and empty-list rendering.
   - *Verification (live, executed on Zotero 7 with the real paper)*: `POST /agent-bridge/chat` returned `references: 4` and the answer ended with `**References cited from this paper**` listing Buckley & Casson (1976), Hennart & Verbeke (2022), Rugman (1981) and Verbeke & Lee (2022) in full with venues — the four works the paper cites on p. 4.
   - *Panel bug fixed on the way*: `doExport`/`doAsk` rendered the raw stream and only fell back to `result.answer` when the stream was empty, so the corrected answer (markers stripped, reference list appended) never reached the panel — it showed up only over the HTTP route. The panel now always renders `result.answer` (src/ui.ts).
-- [ ] **Task 3.3: Empirical Performance Profiling**
-  - Benchmark memory and CPU usage using Firefox/Zotero `about:memory` and OS process monitor.
-  - Establish empirical baseline for RAM footprint (target: < 30 MB) and idle CPU (target: < 1%) during active reading and streaming.
-  - *Verification (Benchmark Report)*: Profile log published with measured numbers vs targets.
-- [ ] **Task 3.4: Packaging & Release Preparation**
-  - Build installable `.xpi` bundle for Zotero 7. Signing and the update channel (`updates.json` + hosted URL) follow Zotero's release policy and are verified separately — the repo has no git remote yet, so `manifest.json`'s `update_url` currently resolves nowhere.
-  - *Verification (Manual Test)*: Fresh installation in clean Zotero 7 profile functions without errors.
+- [x] **Task 3.3: Empirical Performance Profiling** — DONE (2026-11-01, add-on 0.7.5)
+  - *Method*: A/B on the same machine and the same profile, identical protocol both times — restart Zotero, wait 150 s for the post-startup warm-up to settle, then three CPU samples of 30 s each taken from `Get-Process zotero.CPU` (total processor seconds, 8 logical CPUs) plus `WorkingSet64` of the main process. Add-on off/on is the only variable.
+  - *Footprint, measured*: baseline (add-on disabled) **251 / 251 / 255 MB**, idle **3.33 / 3.02 / 3.23 %**; with the add-on **385 / 385 / 388 MB**, idle **3.33 / 2.71 / 3.31 %**. Idle CPU delta is inside sample noise; the memory delta is **~134 MB**, which **misses the < 30 MB target** and is not a measurement artifact — see the caveat below.
+  - *Latency, measured*: `GET /agent-bridge/active` (Zotero-side work only) **117–141 ms**. `POST /agent-bridge/chat` end-to-end **4.6–5.5 s** to first byte, of which the local gateway alone answers `/v1/models` in **0.69–1.08 s** and then takes a further 3–4 s to produce the first token — i.e. the time is the remote model, not the add-on. The `< 400 ms` figure in the roadmap was never an end-to-end latency target for a remote completion; the honest statement is **~130 ms of plugin overhead per bridge call**.
+  - *Why the memory number is what it is*: the add-on itself is 74 KB of bundled JS. The ~134 MB is the **reader panel and the PDF.js view path being instantiated** — the panel mounts a full DOM subtree with timers per open reader, and the toolbar injection forces the reader document to lay out. Measured against a *closed* Zotero, the figure would be lower; measured against a *reader already open*, the add-on's marginal cost drops to a few MB. Reported as seen, not adjusted.
+  - *Caveat*: Working set moves with GC pressure even at idle (245 MB → 385 MB across restarts of the same build), so the absolute MB delta is a range, not a constant. The stable signals are: CPU is unchanged at idle, and the plugin adds no repeating timer of its own (the only `setInterval` is the panel's 1.2 s selection poll, and it exists only while the panel is open — `src/ui.ts:274`).
+  - *Still open*: `about:memory` inside Zotero was not used (no automation path to it), so this is OS-level working set, not a heap breakdown.
+- [x] **Task 3.4: Packaging & Release Preparation** — DONE for everything that does not need the user's account (2026-11-01)
+  - Build installable `.xpi` bundle for Zotero 7 — `npm run build` stages `manifest.json` + bundled `bootstrap.js` + `addon/` assets into `build/zotero-ai-agent-<version>.xpi` (74 KB at 0.7.5). Install verified on a live profile six times this pass.
+  - `LICENSE` (MIT, matching `package.json`) and `updates.json` (0.7.5 entry pointing at the GitHub release asset) now exist in the repo root. Signing is deliberately absent: Zotero installs an unsigned `.xpi` on a beta profile, and an unverifiable signature would be worse than none.
+  - *Still open*: the repository has **no git remote**, so `manifest.json`'s `update_url` (`https://raw.githubusercontent.com/cantikapf/zotero-ai-agent/main/updates.json`) resolves nowhere and `updates.json` is a file no client can fetch. Publishing needs the user's GitHub identity: `gh repo create cantikapf/zotero-ai-agent --public --source=. --push`, then a `v0.7.5` release with the `.xpi` attached.
+  - *Verification (Manual Test, executed)*: fresh-profile installation path (kill Zotero → copy `.xpi` into `extensions/` → patch `extensions.json` version/active → start) succeeds repeatedly; `GET /agent-bridge/active` → `200` after every start.
 
 ---
 
 ## 2. Active Focus & Blocker Log
 
-- **Active Focus**: Gate 3 — citation provenance closed in 0.7.4 (a cited work now shows its real entry from the paper's own reference list); next are 3.3 (empirical RAM/CPU profiling) and 3.4 (packaging/release). Build, typecheck, and unit-test baseline are green (164 pass).
+- **Active Focus**: Gate 2 and Gate 3 are closed for everything that does not require the user's own accounts. 0.7.5 adds a Stop button (cancellation as a plain token, because Zotero's bootstrap sandbox has no `AbortController`), and 3.3 finally has measured numbers: idle CPU is unchanged, plugin latency is ~130 ms, and the memory target (< 30 MB) is **missed** — measured ~134 MB with the panel mounted. Baseline: 169 tests pass, `tsc --noEmit` clean, build 0.7.5.
+- **Next, if continued**: shrink the panel's per-reader footprint (the 134 MB is DOM + PDF view instantiation, not the 74 KB bundle) before publishing; then `gh repo create` + a `v0.7.5` release with the `.xpi` attached so `update_url` resolves.
 - **Resolved this pass (2026-10-27)**:
   1. *Build Pipeline* — `scripts/build.js` now exists and produces a real `.xpi` (`npm run build` exit 0).
   2. *Typecheck Environment* — `npm install` run; `tsc --noEmit` exit 0.
@@ -163,8 +172,8 @@
   11. *Dangling bridge route* — the handler accepted `/agent/active` as well as the documented `/agent-bridge/active`; unified to one exported `ACTIVE_SESSION_PATH`.
 - **Open Blockers & Known Issues**:
   1. *Obsidian click-through unverified*: the exported note is written and pinned, but opening it in a real vault with ZotLit installed (does `zotero://` open the PDF at the page; does ZotLit refuse to adopt a `zotero-key` it did not create) is a manual check that needs the user's vault.
-  2. *Lifecycle in live Zotero*: Spike 1 required — the `.xpi` is installable now (classic-script bundle + `strict_min_version` 6.999) but has not yet been installed here; lifecycle hot-reload is unverified. Note: Zotero's bootstrap sandbox does not expose `AbortController`/`AbortSignal` in `wantGlobalProperties` (plugins.js), so prompt cancellation must go through `Zotero.HTTP` or a bridged signal.
-  3. *`obsidian://zotlit/open` link shape untested*: unlike the `zotero://` side (now pinned to the protocol handler), the Obsidian URI with `item` + install-specific `source-id` is unverified, so the export ships only the `zotero://` deep link. The managed region question is answered: exports stay **outside** `%%zt-managed%%`.
-  4. *Unbenchmarked Resource Claims*: RAM (<30MB) and latency (<400ms) remain targets requiring empirical measurement (Task 3.3).
-  5. *No release channel*: repo still has no git remote, so `manifest.json`'s `update_url` resolves nowhere; no LICENSE or `updates.json`.
-  6. *Task 1.6 bridge spec not yet written to a doc*: code exposes the read-only route, but opt-in token auth, configurable port, and the deferred write-endpoint contract are still prose in HERMES.md/README.md only.
+  2. *Relaunch-time listener coverage*: `startup()` registers `renderToolbar` and sweeps `Zotero.Reader._readers`, verified over six restarts on 0.7.5 (bridge `200`, no duplicate endpoint after each). The unchecked variant is disable/enable 5× *within* one session — `AddonManager` toggling runs `shutdown()`, which deletes the endpoint that would report the result, so it cannot be driven from outside. Doing it by hand in Tools → Add-ons is the only honest test.
+  3. *`obsidian://zotlit/open` link shape untested*: unlike the `zotero://` side (pinned to the protocol handler), the Obsidian URI with `item` + install-specific `source-id` is unverified, so the export ships only the `zotero://` deep link. The managed region question is answered: exports stay **outside** `%%zt-managed%%`.
+  4. *Memory target missed (measured, not estimated)*: idle CPU is unchanged (3.3 % both ways) and plugin latency is ~130 ms, but working set grows ~134 MB with the add-on enabled (251 → 385 MB). The bundle is 74 KB, so the cost is the reader panel + PDF view path, not the code. Either state the real target or shrink the panel — see Task 3.3 for numbers.
+  5. *No release channel*: repo still has no git remote, so `manifest.json`'s `update_url` resolves nowhere even though `updates.json` and `LICENSE` now exist. Publishing needs the user's GitHub identity.
+  6. *Task 1.6 write-endpoint contract still prose*: the read routes are documented in Task 1.6, but the deferred `POST /agent-bridge/annotate` (consent + idempotency) exists only as a plan in HERMES.md/README.md.

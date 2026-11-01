@@ -1,0 +1,18 @@
+{
+  "addons": {
+    "zotero-ai-agent@cantikapf.github.io": {
+      "updates": [
+        {
+          "version": "0.7.5",
+          "update_link": "https://github.com/cantikapf/zotero-ai-agent/releases/download/v0.7.5/zotero-ai-agent-0.7.5.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "6.999",
+              "strict_max_version": "7.0.*"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

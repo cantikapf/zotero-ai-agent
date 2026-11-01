@@ -288,8 +288,9 @@ function renderToolbar(event: any) {
         question: string,
         onChunk: (delta: string) => void,
         highlightKey?: string,
-        useExternalSources?: boolean
-      ) => askLive(question, onChunk, highlightKey, useExternalSources),
+        useExternalSources?: boolean,
+        cancelToken?: { cancelled: boolean }
+      ) => askLive(question, onChunk, highlightKey, useExternalSources, cancelToken),
       pageLabel: async () => {
         const session = await bridgeServer?.getSession();
         return session ? `p. ${session.activePage} / ${session.totalPages}` : null;
@@ -518,7 +519,8 @@ async function askLive(
   question: string,
   onChunk: (delta: string) => void,
   highlightKey?: string,
-  useExternalSources?: boolean
+  useExternalSources?: boolean,
+  cancelToken?: { cancelled: boolean }
 ) {
   const session = await bridgeServer!.getSession();
   return answerFromSession(
@@ -531,6 +533,7 @@ async function askLive(
       language: answerLanguage(),
       style: "explain",
       contextChars: contextChars(),
+      cancelToken,
       // The per-question checkbox wins; the pref decides whether sources are offered at all.
       useExternalSources: !!useExternalSources && externalSourcesEnabled()
     }
@@ -578,6 +581,7 @@ export async function startup({ id, version, rootURI, resourceURI }: any, reason
       }
     };
     Zotero.Server.Endpoints[ACTIVE_SESSION_PATH] = activeEndpoint;
+
 
     chatEndpoint = class {
       supportedMethods = ["POST"];
