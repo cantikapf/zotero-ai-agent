@@ -1,38 +1,170 @@
 # PROJECT.md — Roadmap & State Machine
 
 **Project**: `zotero-ai-agent`  
-**Current Phase**: Gate 1 Complete → Transitioning to Gate 2 (Core MVP)  
-**Last Updated**: October 2026
+**Current Phase**: Gate 3 in progress (Tasks 3.1, 3.1b, 3.1c, 3.1d, 3.2 done; Gate 2 tasks 2.1–2.5 complete)
+**Last Updated**: 2026-10-31 (add-on 0.7.4 — paper-internal citation resolution; every author-year the answer cites now resolves to the paper's own reference entry, verified live)
 
 ---
 
 ## 1. Phase Gates
 
-### Gate 1: Spec & Architecture Validation
-- [x] Reverse engineer `aidenlx/zotlit` protocol and reader notification system (`POST /notify`, `reader/active`).
-- [x] Define resource-saving architecture: Zero Vector DB, native Zotero SQLite FTS, lazy viewport-driven context (< 2k tokens), and streaming DOM rendering.
-- [x] Design local IPC bridge to external harnesses (Hermes Agent / HTTP endpoints).
-- [x] Design Obsidian export contract with ZotLit frontmatter compatibility (`zt-item-key`).
-- [x] Scaffold initial project repository structure with `HERMES.md`, `PROJECT.md`, `README.md`, `.gitignore`, `package.json`, `tsconfig.json`, and core source stubs.
+### Gate 1 (Reopened): Specification, Baseline Spike & Architecture Validation
+*Rationale for Reopening*: The initial scaffold established architectural direction, but baseline builds fail (`scripts/build.js` missing), test coverage is minimal (3 assertions), Zotero 7 Reader API lifecycle/unregistration is unverified in runtime, and performance claims remain unbenchmarked targets.
 
-### Gate 2: Core MVP Implementation (Zotero 7 Reader Chat)
-- [ ] Implement `src/bootstrap.ts` lifecycle hooks (`startup`, `shutdown`) for Zotero 7.
-- [ ] Implement Reader Hook (`src/reader.ts`) to capture active PDF attachment, current page number, and selected text.
-- [ ] Build Ultra-Lightweight Streaming LLM Client (`src/llm.ts`) with custom OpenAI-compatible endpoint support (default: `9router` localhost).
-- [ ] Build Custom Reader Sidebar Panel (`src/ui/sidebar.ts`) using native Zotero 7 DOM APIs with streaming text display and auto-scroll.
-- [ ] Implement Single-Paper Q&A with automatic quote attribution and page number anchor.
-- [ ] Add unit test suite covering protocol payloads, context window caps, and streaming parser.
+- [x] **Task 1.1: Build & Toolchain Baseline Fix** — DONE (2026-10-27)
+  - `scripts/build.js` implemented with node builtins only: `tsc --outDir dist` → stage `dist/` + `manifest.json` + `install-info.json` → archive to `build/zotero-ai-agent-<version>.xpi` (zip(1) when present, else PowerShell `Compress-Archive` to `.zip` then rename, since Compress-Archive rejects the `.xpi` extension).
+  - *Verification (CLI, executed)*: `npm run build` exit 0, artifact `build/zotero-ai-agent-0.1.0.xpi` (5,210 bytes) whose entries are `manifest.json` at root + `bootstrap.js`, `bridge.js`, `llm.js`, `zotlit.js`, `install-info.json`. `npm run typecheck` (tsc --noEmit) exit 0 after `npm install`.
+  - *Resolved*: the staged bootstrap is now bundled by esbuild (`--format=iife`, classic script) because Zotero loads `bootstrap.js` via `Services.scriptloader.loadSubScriptWithOptions` into a `Cu.Sandbox` (`omni.ja → chrome/content/zotero/xpcom/plugins.js`), so an ESM emit would throw and never start. Lifecycle methods are also published on `globalThis` since Zotero resolves `scope[method]`.
+  - *Resolved*: `strict_min_version` was `7.0.0`, which rejects the installed Zotero `7.0.0-beta.83+066eda731` (prerelease sorts below release); now `6.999`.
+- [x] **Task 1.2: Zotero 7 Lifecycle & Teardown Spike (Spike 1)** — DONE for startup (2026-10-27)
+  - Installed `build/zotero-ai-agent-0.1.0.xpi` in Zotero `7.0.0-beta.83+066eda731`; add-on accepted after fixing `strict_min_version` (6.999) and `strict_max_version` (7.0.*) and shipping a classic-script bundle.
+  - *Verification (executed)*: `Zotero.Server.Endpoints["/agent-bridge/active"]` → `"function"` in Run JavaScript; `curl -i http://127.0.0.1:23119/agent-bridge/active` from the shell → `HTTP/1.0 404` with `{"error":"No active paper in reader"}`, i.e. our handler is registered and answering (404 is the expected no-session response). Server prefs are `extensions.zotero.httpServer.enabled=true`, `extensions.zotero.httpServer.port=23119`.
+  - *Note*: `fetch` from the Run JavaScript window fails with `NetworkError` (no system-principal/CORS passthrough there); use `curl` or `Zotero.HTTP.request` to probe the bridge.
+  - *Still open*: disable/enable hot-reload check (endpoint must not duplicate, session must clear) — no Reader listener exists yet, so teardown only deletes the endpoint.
+- [x] **Task 1.3: Zotero Reader Context & Viewport Extraction Spike (Spike 2)** — DONE for page + text (2026-10-28); selection unproven
+  - *Verified path (live Zotero `7.0.0-beta.83`, `X-Zotero-Version: 11.0-beta.2+433c109b7`)*: `Zotero.Reader._readers[n]` → `reader._iframeWindow.wrappedJSObject` (the raw `_iframeWindow` is an Xray wrapper with none of the PDF props) → `PDFViewerApplication.pdfViewer.currentPageNumber` / `pagesCount`, and `PDFViewerApplication.pdfDocument.getPageData({ pageIndex })` where **pageIndex is zero-based** and `chars[i].c` holds the glyphs.
+  - *Dead ends, all reproduced live*: no `reader.state.pageIndex`; `querySelectorAll('[data-page-number]')` and `.textLayer` return 0 inside the reader window; `pdfDocument.getPage(n)` yields a PDFPageProxy with **no** `getTextContent()`; returning `getPageData()` into chrome throws `DataCloneError: The object could not be cloned.`
+  - *Implementation*: `src/reader.ts` runs the extraction **inside** the reader window (`win.eval`) and returns only a JSON string of primitive char records; `joinChars()` then joins them in chrome with Zotero's own rule (`spaceAfter || (lineBreakAfter && !paragraphBreakAfter)` → space), deliberately ignoring `wordBreakAfter`, which fires on nearly every glyph and produced `Vol . : ( 0123456789 )` when treated as a space.
+  - *Verification (live, executed)*: `curl http://127.0.0.1:23119/agent-bridge/active` → `200`, `activePage 3 / totalPages 24`, `pageText` 3,821 chars of the actual page ("Vol.:(0123456789) Journal of International Business Studies https://doi.org/10.1057/s41267-025-00786-y Success and failure in family firm internationalization…"), `selectedText` correctly omitted. Unit: `npm test` 36/36 with `readPageSnapshot` + `joinChars` suites.
+  - *Still open*: text selection still comes back `""` (`window.getSelection()` inside the PDF.js window), and page tracking is a per-request read, not an event — the `renderTextSelectionPopup` / `renderToolbar` listener path remains unverified.
+- [x] **Task 1.4: ZotLit & Obsidian Interop Compatibility Spike (Spike 3)** — DONE for the export/pinning contract (2026-10-31)
+  - Pinned `zotero-key` and its group form `KEYg<groupID>` from the ZotLit docs, and verified both deep-link routes against Zotero's own `ZoteroProtocolHandler.mjs` `OpenExtension` router (not from memory).
+  - Row stays open only for the Obsidian-side click-through, which needs a real vault with ZotLit installed.
+- [x] **Task 1.5: Hardened LLM Client & SSE Test Suite** — DONE (2026-10-27)
+  - Token cap / character bounds enforced in `buildViewportPrompt` (`MAX_CONTEXT_CHARS = 8000`, viewport budget minus 1,500 for selection, `[... truncated at N chars]` marker).
+  - `streamChatCompletion` no longer buffers by default (5th arg `collect = false`); returns `""` unless the caller needs the assembled answer. `[DONE]` now actually exits the read loop (was only breaking the inner `for`). AbortSignal forwarded to `fetch`; reader cancelled on early exit.
+  - *Verification (Unit Test, executed)*: `npm test` → 11/11 pass, 3 suites. Covers SSE deltas split across chunk boundaries, `[DONE]` + dropped trailer, no-buffer default, endpoint/payload shape, HTTP 500 surfacing (`/LLM Error 500/`), abort propagation, oversized-context truncation, short-context passthrough.
+- [x] **Task 1.6: Bridge Security & Proposed Specification** — DONE for the two routes now implemented (2026-10-28)
+  - `GET /agent-bridge/active` — read-only; 200 with the live session, 404 `{"error":"No active PDF reader session in Zotero."}` when no PDF is open. No state is cached: the provider is called per request, so nothing needs unregistering on teardown.
+  - `POST /agent-bridge/chat` — body `{"question": "..."}`; 200 `{answer, pageNumber, model}`, 400 for "no paper"/"missing question", 502 when the gateway fails, 503 if no answerer is wired. Non-mutating: it reads the live page and calls the LLM, it never writes to the library, so it carries no consent/idempotency burden.
+  - Endpoint dispatch: one-parameter `init(request)` receives `{ method, pathname, searchParams, headers, data }` and returns `[status, contentType, body]`; `data` is the already-parsed JSON object. Async `init()` is supported (`server.js:533`).
+  - Config is pref-driven, full names, second arg `true`: `extensions.zotero-ai-agent.baseUrl`, `.model`, `.apiKey`. **`Zotero.Prefs.get` prepends `extensions.zotero.` unless `global=true`** (`xpcom/prefs.js:get`) — without it every lookup silently returned `undefined` and the key was never sent (`auth=missing`, gateway 401).
+  - *Verification (live, executed 2026-10-28 on add-on 0.2.3)*: `curl -X POST .../agent-bridge/chat -d '{"question":"In one sentence: what is this paper about? Cite the page."}'` → `{"answer":"Paper examine over 100 years of Rothschild international activity…(p. 3).","pageNumber":3,"model":"ag/gemini-3.8-flash"}` against `http://127.0.0.1:20128/v1`. Unit: `npm test` 43/43 (10 suites) covers the 400/502/503 matrix and prompt assembly.
+  - *Still open*: no auth token on the bridge yet (localhost-only today), `POST /agent-bridge/annotate` deferred as planned, and the configurable-port story is still just the Zotero pref `extensions.zotero.httpServer.port`.
+  - *Verification (Spec Review)*: Architectural boundary clearly separates read-only MVP inspection from write mutations.
 
-### Gate 3: External Harness Bridge, ZotLit Sync & Packaging
-- [ ] Implement Local Agent Bridge (`src/bridge.ts`) exposing `GET /agent/active` and `POST /agent/comment` via Zotero's internal server.
-- [ ] Add Hermes Agent integration skill / tool definition to query Zotero reading state during autonomous tasks.
-- [ ] Implement "Export Discussion to Obsidian" with ZotLit URI schema (`zotero://open-pdf/...` and `obsidian://zotlit/...`).
-- [ ] Benchmark CPU/RAM consumption inside Zotero 7 (< 30 MB RAM footprint verified).
-- [ ] Setup build and packaging script to produce signed/installable `.xpi` add-on bundle.
+---
+
+### Gate 2: Core MVP Implementation (Single-Paper In-Reader Chat)
+*State: Blocked pending Gate 1 validation.*  
+*MVP Scope Boundary*: Strictly single-paper in-reader discussion.  
+*Explicit MVP Exclusions*:
+- Multi-paper cross-synthesis (deferred to post-MVP).
+- Write-capable bridge / autonomous annotation injection (deferred to Gate 3+).
+- Automated background synchronization to Obsidian vault (manual export only).
+
+- [ ] **Task 2.1: Lifecycle & Reader Event Hook**
+  - Implement `src/bootstrap.ts` and `src/reader.ts` using verified APIs from Spike 1 & 2.
+  - *Verification (Unit Test)*: State tracker updates session on mocked reader events.
+  - *Verification (Real Zotero Manual Test)*: Disable/enable add-on 5 times consecutively; verify zero lingering listeners or memory creep.
+- [ ] **Task 2.2: Streaming LLM Client Integration**
+  - Implement streaming completion with 9router/OpenAI-compatible endpoints (`/v1/chat/completions`).
+  - *Verification (Unit Test)*: Mock fetch test verifies streaming chunk delivery and abort propagation.
+  - *Verification (Real Zotero Manual Test)*: Token-by-token rendering in reader UI without UI thread hitching.
+- [ ] **Task 2.3: Bounded Context, Citation Provenance & Abstention**
+  - Enforce strict page citation requirements in prompts and UI.
+  - Implement honest abstention when the viewport excerpt lacks sufficient evidence to answer.
+  - *Verification (Unit Test)*: Prompt builder includes strict citation and abstention rules.
+  - *Verification (Real Zotero Manual Test)*: Asking an off-topic question produces an honest abstention response.
+  - *Verified live 2026-10-28 (add-on 0.2.3)*: off-topic ask → `"Provided excerpt not contain answer. No mention capital of France or 2018 World Cup winner (p. 3)."` — the model abstains instead of answering from prior knowledge, and still carries the page citation. Grounded ask → cites `(p. 3)` correctly. Remaining: the citation is model-authored text, not yet validated/enforced by code, and there is no UI to render it.
+- [ ] **Task 2.4: Reader Sidebar UI Panel**
+  - Native sidebar chat panel rendered using standard Zotero 7 DOM/XUL components.
+  - *Verification (Real Zotero Manual Test)*: Sidebar toggles cleanly, scrolls automatically with stream, and handles window resizing.
+  - *Status 2026-10-28 (add-on 0.3.0)*: LIVE but not a native sidebar — a floating panel injected via `Zotero.Reader.registerEventListener("renderToolbar", handler, pluginID)` (payload `{ reader, doc, params, append }`, verified `xpcom/reader.js:1577`), toggled by a toolbar **AI** button. Streaming render confirmed by user screenshot. Ponytail: upgrade to a real sidebar tab item once the tab API is verified.
+  - *Status 2026-10-29 (add-on 0.5.1)*: selection fix. Root cause found in `resource/reader/reader.js:27420` — `window.PDFViewerApplication = this._iframeWindow.PDFViewerApplication` mirrors only the app object onto the reader window; the PDF text layer and its selection live in the nested `pdf/web/viewer.html` iframe (`_iframe = document.createElement('iframe')`), so the reader window never owns a selection. Tracking now attaches on every viewer iframe `load` (plus a `MutationObserver` for iframes created after `renderToolbar`), and `readPageSnapshot` asks each `frame.contentWindow.getSelection()` before falling back to the remembered copy.
+  - *Status 2026-10-29 (add-on 0.6.0) — restored-session fix*: a PDF tab restored on Zotero launch mounted its toolbar **before** our `renderToolbar` listener existed (`resource/reader/reader.js` — `CustomSections` dispatches `customEvent` from a React `useEffect`, once per mount), so the listener never fired for it and the **AI** button was missing until the tab was closed and reopened. Diagnosed live: `reader tab=… doc=true tracked=false button=false panel=false toolbar=true customSections=1`. `startup()` now sweeps `Zotero.Reader._readers` (`injectOpenReaders`, 1 s retry up to 20×) and injects into `.toolbar .end` — the same host React uses for `renderToolbar`'s `append`. Re-verified on the same restored tab: `tracked=true button=true panel=true`, bridge `200`.
+  - *Status 2026-10-29 (add-on 0.5.6)*: tier order fixed from live evidence — `selectionLog` showed `dom-inner` winning with a stale `"\r\nIntroducti"` while `rangesLen=0` and the correct `"Family firms,"` sat in the remembered slot (age 108 s). Reading order is now `_selectionRanges` → remembered (`{text,t}`, < 120 s) → outer DOM → viewer-iframe DOM, because clicking into the panel clears Zotero's ranges and the viewer iframe keeps an old DOM selection indefinitely.
+- [x] **Task 2.5: Preferences Pane & Configuration** — DONE (2026-10-29, add-on 0.6.0)
+  - `Zotero.PreferencePanes.register({ id, pluginID, src, label })` verified in `xpcom/preferencePanes.js:register`; the pane auto-unregisters on plugin shutdown (the module's own `unregister` runs from a `Zotero.Plugins` observer), so we never call it.
+  - Pane file `addon/preferences.xhtml` is a **XUL fragment, not a document**: `preferencePanes.js` sets `defaultXUL: true` unconditionally, and `preferences.js:_loadPane` then parses it with `MozXULElement.parseXULToFragment`. So: no `<?xml?>` prolog, no `xmlns:` declarations, XUL is the default namespace, HTML tags need `html:`. A prolog throws `not well-formed XHTML` and the pane silently never renders.
+  - `preference="extensions.zotero-ai-agent.<key>"` on an `<html:input>` is bound natively by `preferences.js` (`_syncFromPref` on load + `Zotero.Prefs.registerObserver`; `_syncToPrefOnModify` on `input`/`change`/`command`), so the pane ships **zero JavaScript**.
+  - Defaults live in `addon/prefs.js` at the xpi root, loaded by Zotero's plugin loader (`xpcom/plugins.js:setDefaultPrefs` → `addon.getResourceURI("prefs.js")` into the default pref branch). User-set values always win.
+  - Menu: `Zotero.MenuManager` is **Zotero 8+ and absent from 7.0.0-beta.83** (`grep MenuManager` over all 7,886 omni.ja entries → 0 hits; Notero 2.1.0 uses it and its Tools entry only appears on Zotero 8+). Zotero 7 has no menu API, so the item is injected into `#menu_ToolsPopup` (present in `zoteroPane.xhtml`) via `onMainWindowLoad` + a startup sweep of `Zotero.getMainWindows()`, and removed in `onMainWindowUnload` + `shutdown()`.
+  - *Verification (Unit Test, executed)*: `npm test` → 66 pass / 0 fail, 16 suites (`tests/test_preferences.test.js` pins the register shape, the no-prolog/no-xmlns rule, pref↔prefs.js parity, the masked key field, menu inject/remove, scope publication, xpi staging, version sync).
+  - *Verification (live, executed on Zotero 7.0.0-beta.83 — temporary self-test, since removed)*: `[Zotero-AI-Agent] Preference pane registered: zaa-preferences`; pane present in the prefs nav (`panes.keys()` includes `zaa-preferences`); `container children=2 inputs=4`; all four inputs hydrated from real prefs (`baseUrl=http://127.0.0.1:20128/v1`, `model=ag/gemini-3.8-flash`, `apiKey` masked `type=password`, `answerLanguage=""`); headings `LLM Gateway|Answers`; **write path** proven — setting `#zaa-model` + dispatching `input` moved the pref to `"ag/gemini-3.8-flash-TEST"` and restoring it moved it back; Tools popup children end with `…|manage-attachments-menu|zaa-tools-preferences`, label `"Zotero AI Agent Preferences…"`, and remove→re-add flipped `false`→`true`. Bridge still `200` on 0.6.0.
+  - *Update 2026-10-30 (add-on 0.6.1)*: the pane now also carries **Context budget (characters)** and **Hermes Bridge → Access token**. Both are pref-driven with no new code paths: `contextChars` feeds `buildViewportPrompt` (clamped 1,000–200,000, blank → `MAX_CONTEXT_CHARS` 8000; the 1,500-char selection budget shrinks with it), and `bridgeToken` is read once per `startup()` into `AgentBridgeServer.setAuthToken`. Blank token keeps the old open-loopback behaviour, so the pane is backwards compatible.
+
+---
+
+### Gate 3: External Read-Only Bridge, ZotLit Export & Performance Profiling
+*State: Blocked pending Gate 2 completion.*
+
+- [x] **Task 3.1: Opt-In Authenticated Read-Only Bridge** — DONE (2026-10-30, add-on 0.6.1)
+  - `GET /agent-bridge/active` and `POST /agent-bridge/chat` now check `Authorization: Bearer <token>` in `bridge.ts:authorized()` before dispatch. Token source is the pref `extensions.zotero-ai-agent.bridgeToken` (pane field, `type=password`), read once in `startup()`; **blank = no auth**, preserving the previous loopback-only behaviour.
+  - Both Zotero endpoints are now class-based only through `handleRequest`, so the auth check cannot be bypassed by one route (`bootstrap.ts` `activeEndpoint` previously read the session provider directly).
+  - Header names arrive lowercased from `xpcom/server/server.js`; the check accepts `authorization`/`Authorization`, case-insensitive `Bearer` (verified in `server.js` request construction).
+  - ponytail: string comparison, not constant-time — acceptable only because Zotero's internal server already rejects non-local `Host` headers. Upgrade path: `ChromeUtils`/`crypto.subtle` timing-safe compare if the bridge ever leaves loopback.
+  - *Verification (Unit Test, executed)*: `npm test` → 71 pass / 0 fail. New cases: open when no token; 401 for missing / empty / wrong / non-Bearer header; 200 on both routes with the right token; case-insensitive `bearer` with extra whitespace.
+  - *Verification (live, executed on Zotero 7.0.0-beta.83, pref `bridgeToken=testtoken42`, token then removed)*: `curl /agent-bridge/active` → **401** with no header, **401** with `Bearer wrong`, **200** with `Bearer testtoken42` returning the Rothschild item (`HCS9BRGQ`, page 3/24). `curl POST /agent-bridge/chat` → **401** unauthenticated, **200** authenticated with a grounded answer + `pageNumber: 3`. With the pref blank: **200**.
+- [x] **Task 3.1b: Write Answers Back Into the Paper** — DONE (2026-10-30, add-on 0.6.2)
+  - Two buttons under each answer: **Highlight + comment** and **Save as note**. Highlight mode stores the answer as the annotation comment (Zotero shows it in the sidebar and in exports); note mode creates a child note under the *paper* (`parentItemID` = 4242-style parent, not the PDF).
+  - Highlight write path: `view._getAnnotationFromSelectionRanges(ranges, "highlight", color)` builds `{type,color,sortIndex,pageLabel,position,text}` — verified at `resource/reader/reader.js:4886842` — then `view._onAddAnnotation(annotation, true)` → `AnnotationManager.addAnnotation()` (requires `color` + `sortIndex`) → `_applyChanges('add-annotations')` → the reader's own debounced save. No SQLite writes from the plugin.
+  - **Clicking the panel clears `_selectionRanges`**, so a highlight cannot be built at save time. The selection tracker now snapshots the full annotation JSON (`__zaaLastAnnotation`, 5 min TTL) while the ranges are still live; the save path prefers that snapshot and only falls back to live ranges. Without this the button always failed with "Select text in the PDF first" even though text was selected.
+  - Note body (`answerToNoteHtml`) carries **Q**, page, a `<blockquote>` of the selected passage, the answer paragraphs, and bullets. Passing the selection in makes the note readable outside the reader.
+  - *Bug fixed during verification*: `saveAnswerAsNote` / `addCommentToAnnotation` called `item.saveTx()` without `await`. `saveTx()` returns a Promise (`dataObject.js`: `saveTx = function(){ … return this.save(options) }`) and the item key is assigned inside `save()`, so the functions returned `key: ""` and the note was never addressable. Both are now `async`/`await`, and `saveAnswerToPaper` awaits them.
+  - *Verification (Unit Test, executed)*: `npm test` → 86 pass / 0 fail, 20 suites. New `tests/test_annotate.test.js` (15 cases) covers the quoted passage, HTML escaping, comment edit vs. create, the live-selection path, the snapshot path, stale-snapshot rejection, collapsed-selection rejection, no-reader, note creation, and the parent walk. The note stub assigns `key` **after** an await point, so dropping the `await` fails the suite (verified by temporarily reverting: 14/15).
+  - *Verification (live, executed on Zotero 7.0.0-beta.83 with a temporary probe endpoint, since removed)*: highlight → annotation `279FULAY` created on attachment `B5NKI9K6`, synced to the Zotero server with `annotationText` + `annotationComment`, then erased (annotation count back to 0 for that attachment, 0 `PROBE%` rows in the copy of `zotero.sqlite`). Note → `8ZAZVGBC` created with `parentID=4660` (the paper), `storedMatches=true`, `hasQuestion=true`, `hasBlockquote=true`, `hasBullets=2`, then erased. Probe endpoint removed from source; final bundle contains no `selftest` / `ZAA-PROBE` strings.
+
+- [x] **Task 3.1c: DOI-Validated External References** — DONE (2026-10-30, add-on 0.6.3)
+  - Why Crossref and not a web search: every record carries a registered DOI, so each citation resolves at `https://doi.org/<doi>`. No API key, one request, no scraping. OpenAlex was rejected as redundant — a second index for the same job.
+  - **The model never invents a reference.** References are fetched before the prompt, numbered by code (`[E1]`, `[E2]`, …), and the bibliography is rendered from the records, not from model text. `resolveCitations` deletes any `[En]` the model writes that is not in the list, so a dangling citation cannot reach the user. Prompt rule 7 states the prohibition; the code enforces it.
+  - **Opt-in twice.** Pref `extensions.zotero-ai-agent.useExternalSources` (default `false`) is the master switch; when off, the panel does not render the checkbox at all. When on, each question carries a per-question "Add references from the web (DOI-verified)" checkbox, so a lookup is never a surprise network call. `POST /agent-bridge/chat` takes `useExternalSources: true` for the same purpose.
+  - **The paper stays primary.** Prompt rule 8 requires answers to state what the paper says first and mark external material as secondary, and to say so when the external list does not cover the point.
+  - **Query quality mattered more than ranking.** Sending the raw question ("What is internalization theory and how does it explain MNE expansion?") returned markedness and compellence papers. `toSearchQuery` drops interrogatives and stopwords, so Crossref gets `internalization theory mne expansion`, which returns internalization/MNE literature instead. Ranking keeps Crossref relevance but lets a heavily cited paper float above a near-tie in 50-citation buckets. Records without a DOI, without a title, or of type `component` / `peer-review` / `grant` are discarded. Crossref's `&amp;` in titles is decoded.
+  - **Failure is silent by design.** Offline, 429, malformed JSON or a 5 s timeout all resolve to "no sources" and the answer comes from the paper alone — worth stating because it means a broken lookup degrades quietly rather than blocking a reading session.
+  - Integration point: `src/sources.ts` (pure, fetch injected). `zoteroFetch` in `bootstrap.ts` wraps `Zotero.HTTP.request`, which resolves with the XMLHttpRequest object (verified in `chrome/content/zotero/xpcom/http.js`: `deferred.resolve(xmlhttp)`), because `fetch` is not guaranteed inside the plugin sandbox. `chatDeps()` is shared by the reader panel and the HTTP route after a live failure showed the route had no `findSources` at all.
+  - *Verification (Unit Test, executed)*: `npm test` → **120 pass / 0 fail**, 25 suites. New `tests/test_sources.test.js` (27 cases): DOI normalisation, entity decoding, dropped non-scholarly types, ranking, query reduction, `limit`, short-query guard, 5xx / network-throw / malformed-payload degradation, invented-marker stripping, bibliography rendering. `tests/test_chat.test.js` +4 (lookup only when asked, no network when off, answer still lands when the lookup throws, invented `[E9]` removed). `tests/test_ui.test.js` +3 (no reference wording when empty, numbering + prohibition when present, `[E1]` list in the user turn).
+  - *Verification (live, executed on Zotero 7.0.0-beta.83, pref `useExternalSources=true`)*: `POST /agent-bridge/chat` with `useExternalSources: true` → **200**, `sources` = 5 Crossref records (`Down with MNE-centric theories!` 2009 / 485 cites, `An internalization theory rationale for MNE regional strategy` 2012 / 52, `The evolutionary view of the MNE` 2003 / 94, +2), answer cites `[E1]` and appends **Sources consulted (DOI-verified)** with resolvable links; debug log shows one `HTTP GET https://api.crossref.org/works?query.bibliographic=internalization%20theory%20mne%20expansion&rows=10&…`. DOI resolution spot-checked: `10.1057/s42214-024-00200-8` → **200** at link.springer.com (the paper being read), `10.1108/15253831211238212` → **403** from Emerald's bot wall, i.e. the DOI is registered and resolves to the publisher even where the publisher blocks automated fetches. Same request without the flag → `sources` absent and no bibliography, confirming the opt-in.
+
+- [x] **Task 3.2: Discussion Export to Obsidian** — DONE (2026-10-31, add-on 0.7.0)
+  - Button **Export to Obsidian** under each answer, present only when the pref `extensions.zotero-ai-agent.obsidianExportDir` names a folder (empty pref hides it, so there is never a dead button).
+  - File is `AI Discussions - <itemKey>.md`, one per paper. A second answer **appends** a `## Discussion <date> — p. <label>` section instead of replacing the file, and the frontmatter is never rewritten: a `zotero-key` ZotLit already manages keeps its identity.
+  - Frontmatter pinned from the ZotLit docs (`zotlit.aidenlx.site/docs/reference/templates/frontmatter`, `/docs/concepts/literature-notes-and-the-managed-region`): `zotero-key` is the only system-managed key and its value is `KEY` for My Library and `KEYg<groupID>` for a group library. Our body space is outside `%%zt-managed%%` — that region is ZotLit's and its update replaces it.
+  - Deep links follow Zotero's own protocol handler (`chrome/content/zotero/ZoteroProtocolHandler.mjs`, `OpenExtension` routes): `zotero://open-pdf/library/items/<key>?page=<n>` and `.../groups/<groupID>/items/<key>?page=<n>`. Group id comes from `Zotero.Libraries.get(item.libraryID).groupID`; no hardcoded library assumptions.
+  - Guard: an existing export whose `zotero-key` names a different item is refused (`Export file belongs to another item (...)`) rather than mixed, so a renamed or copied vault file cannot absorb another paper's discussions.
+  - Write path is `Zotero.File.putContentsAsync` → `OS.File.writeAtomic` (temp file + rename, verified in `xpcom/file.js:418`), so an interrupted write cannot leave a half-written note.
+  - *Bug found live*: `OS.File.writeAtomic` rejects a forward-slash Windows path — `Could not write to 'C:/…/AI Discussions - …md': NS_ERROR_FILE_UNRECOGNIZED_PATH`, and `Zotero.File.pathToFile` then threw "Unexpected path value". `fileJoin()` now normalises to the platform separator (`Zotero.isWin ? "\" : "/"`). Both failures were reproduced from the live probe before the fix.
+  - *Verification (Unit Test, executed)*: `npm test` → **152 pass / 0 fail**, 34 suites. New `tests/test_zotlit_export.test.js` (23 cases): identity in both libraries, both URI shapes, missing-page URI, file naming, quoting/escaping, multi-line excerpt, page label, no `%%zt-managed%%` emission, append keeps earlier answers + exactly one frontmatter block + one H1, existing frontmatter preserved verbatim, and `readFrontmatter` on missing/unclosed YAML.
+  - *Verification (live, executed on Zotero 7.0.0-beta.83, pref set to a scratch folder, temporary probe endpoint since removed)*: first POST → `Exported to Obsidian`, file `AI Discussions - HCS9BRGQ.md` with `zotero-key: "HCS9BRGQ"`, a resolvable `zotero://open-pdf/library/items/B5NKI9K6?page=3` link and the real title/highlight text; second POST → `Appended to Obsidian export`, both questions and both answers present, one frontmatter block, one H1; editing the file's `zotero-key` to `OTHER123` then re-posting → `Export file belongs to another item (OTHER123)` and the section was **not** written (`grep -c` → 0). Panel DOM checked live: buttons `× | Send | Highlight + comment | Save as note | Export to Obsidian`.
+  - *Still open*: importing the exported file into a real Obsidian vault with ZotLit installed (click-through of the `zotero://` link and ZotLit's refusal to treat the file as its own literature note) is a manual step, not verifiable from Zotero.
+- [x] **Task 3.1d: Paper-Internal Citation Resolution** — DONE (2026-10-31, add-on 0.7.4)
+  - *Reported symptom*: answers cited works the way the paper does — `(Buckley & Casson, 1976; Rugman, 1981; p. 4)` — and the reader had nothing to click: those names are in the paper's reference list, pages away from the excerpt the model was given.
+  - The paper's own reference list is now resolved and listed under the answer, quoted verbatim: `parseBibliography()` reads the full text Zotero already caches at `<storage>/.zotero-ft-cache` (written by `pdfWorker.getFullText` at import time, so no extraction is triggered per question), and `citedReferences()` matches each cited author-year to the entry it belongs to.
+  - *Why the cache and not a new extraction*: the file exists on disk for every indexed PDF (`Zotero.Fulltext.getItemCacheFile`), costs no worker round-trip, and an unindexed paper simply yields no list instead of a slow read. Verified against the live cache of item `HCS9BRGQ` (112,415 chars, `References` heading at 100,052).
+  - Matching needs *every* surname plus the year: `Verbeke & Lee, 2022` must not resolve to `Hennart & Verbeke, 2022`, which also contains a Verbeke and a 2022. Three citation shapes are recognised, because the model uses all three in practice — parenthesised `(A & B, 1976)`, comma `A & B, 1976`, and narrative `A & B (1976)` / `A et al. (2021)`. A bare year in prose ("In 1976") and page references "(p. 4)" are not citations and resolve to nothing.
+  - Entries are cut at the author header that follows the previous entry's year (`Surname, I.`), because the cache glues entries onto one line — a newline split produced a merged "Birmingham… Buckley & Casson" entry on the first attempt.
+  - *Verification (Unit Test, executed)*: `npm test` → **164 pass / 0 fail**. New cases cover the glued-line split, the missing-heading case, shared-surname disambiguation, dropping unknown citations, all three citation shapes, and empty-list rendering.
+  - *Verification (live, executed on Zotero 7 with the real paper)*: `POST /agent-bridge/chat` returned `references: 4` and the answer ended with `**References cited from this paper**` listing Buckley & Casson (1976), Hennart & Verbeke (2022), Rugman (1981) and Verbeke & Lee (2022) in full with venues — the four works the paper cites on p. 4.
+  - *Panel bug fixed on the way*: `doExport`/`doAsk` rendered the raw stream and only fell back to `result.answer` when the stream was empty, so the corrected answer (markers stripped, reference list appended) never reached the panel — it showed up only over the HTTP route. The panel now always renders `result.answer` (src/ui.ts).
+- [ ] **Task 3.3: Empirical Performance Profiling**
+  - Benchmark memory and CPU usage using Firefox/Zotero `about:memory` and OS process monitor.
+  - Establish empirical baseline for RAM footprint (target: < 30 MB) and idle CPU (target: < 1%) during active reading and streaming.
+  - *Verification (Benchmark Report)*: Profile log published with measured numbers vs targets.
+- [ ] **Task 3.4: Packaging & Release Preparation**
+  - Build installable `.xpi` bundle for Zotero 7. Signing and the update channel (`updates.json` + hosted URL) follow Zotero's release policy and are verified separately — the repo has no git remote yet, so `manifest.json`'s `update_url` currently resolves nowhere.
+  - *Verification (Manual Test)*: Fresh installation in clean Zotero 7 profile functions without errors.
 
 ---
 
 ## 2. Active Focus & Blocker Log
 
-- **Active Focus**: Setting up Gate 2 core TypeScript sources (`bootstrap.ts`, `reader.ts`, `llm.ts`, `bridge.ts`).
-- **Blockers**: None.
+- **Active Focus**: Gate 3 — citation provenance closed in 0.7.4 (a cited work now shows its real entry from the paper's own reference list); next are 3.3 (empirical RAM/CPU profiling) and 3.4 (packaging/release). Build, typecheck, and unit-test baseline are green (164 pass).
+- **Resolved this pass (2026-10-27)**:
+  1. *Build Pipeline* — `scripts/build.js` now exists and produces a real `.xpi` (`npm run build` exit 0).
+  2. *Typecheck Environment* — `npm install` run; `tsc --noEmit` exit 0.
+  3. *Incomplete Test Coverage* — 3 → 11 assertions across 3 suites (`tests/test_llm_stream.test.js` added).
+  4. *Lifecycle Listener Leak* — removed: `Zotero.Reader.registerEventListener("renderProcessCreated", ...)` was not a real event type (valid: `renderTextSelectionPopup`, `renderSidebarAnnotationHeader`, `renderToolbar`, `create*ContextMenu` per reader.js:1840), so no listener is registered until Spike 2. `shutdown()` deletes the server endpoint and clears the session.
+  5. *Server Dispatch Signature* — endpoint `init()` now takes one parameter and returns `[status, contentType, body]`, matching Zotero's arity-based dispatch (server.js:489-505); the previous zero-arg `init()` fell into the 3-arg branch and its return value was discarded.
+  6. *Unenforced Token Bounds & Accumulation* — capping and non-buffered streaming implemented (see Task 1.5).
+  7. *Wrong default gateway port* — `DEFAULT_CONFIG.baseUrl` is `http://127.0.0.1:20128/v1` (verified live); `8080` is refused on this machine.
+  8. *Wrong ZotLit key* — `src/zotlit.ts` emitted `zt-item-key`; ZotLit v2 pins literature notes with `zotero-key` (`zt-item-key` is an internal `@zotlit/db` module name). Code, tests, and docs updated.
+  9. *Add-on rejected: "not compatible with this version"* — two causes, both fixed: ESM `bootstrap.js` (Zotero loads it as a classic subscript) and `strict_min_version: "7.0.0"` against the installed Zotero `7.0.0-beta.83+066eda731`.
+  10. *Phantom manifest icon* — `manifest.json` declared `addon/icon-48.png` while `addon/` is empty; entry removed until a real icon exists.
+  11. *Dangling bridge route* — the handler accepted `/agent/active` as well as the documented `/agent-bridge/active`; unified to one exported `ACTIVE_SESSION_PATH`.
+- **Open Blockers & Known Issues**:
+  1. *Obsidian click-through unverified*: the exported note is written and pinned, but opening it in a real vault with ZotLit installed (does `zotero://` open the PDF at the page; does ZotLit refuse to adopt a `zotero-key` it did not create) is a manual check that needs the user's vault.
+  2. *Lifecycle in live Zotero*: Spike 1 required — the `.xpi` is installable now (classic-script bundle + `strict_min_version` 6.999) but has not yet been installed here; lifecycle hot-reload is unverified. Note: Zotero's bootstrap sandbox does not expose `AbortController`/`AbortSignal` in `wantGlobalProperties` (plugins.js), so prompt cancellation must go through `Zotero.HTTP` or a bridged signal.
+  3. *`obsidian://zotlit/open` link shape untested*: unlike the `zotero://` side (now pinned to the protocol handler), the Obsidian URI with `item` + install-specific `source-id` is unverified, so the export ships only the `zotero://` deep link. The managed region question is answered: exports stay **outside** `%%zt-managed%%`.
+  4. *Unbenchmarked Resource Claims*: RAM (<30MB) and latency (<400ms) remain targets requiring empirical measurement (Task 3.3).
+  5. *No release channel*: repo still has no git remote, so `manifest.json`'s `update_url` resolves nowhere; no LICENSE or `updates.json`.
+  6. *Task 1.6 bridge spec not yet written to a doc*: code exposes the read-only route, but opt-in token auth, configurable port, and the deferred write-endpoint contract are still prose in HERMES.md/README.md only.

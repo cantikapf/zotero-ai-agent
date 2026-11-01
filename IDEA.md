@@ -21,39 +21,44 @@
 
 ## 3. Core Architectural Pillars
 
-### A. Zero-Vector DB & Structural Context (Hemat RAM < 30 MB, CPU < 1%)
-- **Nol Dependency Embedding Lokal**: Menghindari pembebanan RAM dari library PyTorch/Transformers lokal di dalam proses Zotero.
-- **Leverage Native Zotero SQLite FTS**: Memanfaatkan mesin pencari teks penuh bawaan Zotero (`Zotero.Fulltext`) untuk query kata kunci tanpa perlu indexing ulang.
-- **Viewport-Driven Lazy Injection**: Hanya menyuntikkan teks halaman PDF yang sedang aktif di viewport reader dan teks yang diblok/di-highlight user (< 2.000 token). KV-cache di 9router tetap kecil (< 400 MB VRAM) dan respon instan (< 400 ms).
-- **DOM Streaming**: Respons LLM di-stream via SSE (`ReadableStream`) langsung ke elemen sidebar HTML tanpa buffering string raksasa di memori JavaScript.
+### A. Zero-Vector DB & Structural Context (Target Efisiensi Memori)
+- **Nol Dependency Embedding Lokal**: Menghindari beban RAM dari library PyTorch/Transformers lokal di dalam proses Zotero.
+- **Leverage Native Zotero SQLite FTS**: Memanfaatkan mesin pencari teks penuh bawaan Zotero (`Zotero.Fulltext`) sebagai **filter kandidat kata kunci** saja — API ini mengembalikan item yang cocok, bukan teks atau nomor halaman; pengambilan teks aktual masuk cakupan Spike 2.
+- **Target Footprint & Metodologi Pengujian**: Menargetkan overhead RAM Zotero `< 30 MB` dan idle CPU `< 1%`. Angka ini merupakan target arsitektur yang harus divalidasi melalui profiling empiris (`about:memory` dan OS process monitor), bukan klaim yang belum diuji.
+- **Viewport-Driven Lazy Injection**: Menyuntikkan teks halaman PDF yang sedang aktif di viewport reader dan teks yang diblok/di-highlight user (< 2.000 token target) ke LLM gateway (`9router`). Metodologi ekstraksi teks viewport memerlukan spike pada API publik Zotero 7 Reader.
+- **DOM Streaming**: Respons LLM di-stream via SSE (`ReadableStream`) langsung ke elemen UI. Implementasi harus menghindari akumulasi buffer string besar di memori runtime.
 
-### B. Dual Discussion Modes
-1. **Single-Paper Deep Dive**:
-   - Diskusi interaktif terikat pada halaman PDF aktif.
+### B. Discussion Modes & Batasan Ruang Lingkup MVP
+1. **Single-Paper Deep Dive (Fokus Utama Core MVP)**:
+   - Diskusi interaktif terikat pada halaman PDF aktif di Zotero Reader.
    - Wajib menyertakan kutipan teks verbatim dan nomor halaman pada setiap klaim jawaban.
-2. **Multi-Paper Synthesis (Collection-Level)**:
+   - **Prinsip Abstensi**: Jika jawaban tidak didukung oleh teks kutipan halaman aktif, model wajib menyatakan tidak dapat menjawab secara jujur dan dilarang berhalusinasi.
+2. **Multi-Paper Synthesis (Collection-Level) — [Non-MVP / Pasca-MVP]**:
    - Membandingkan temuan dari seluruh paper di dalam satu koleksi Zotero terpilih.
-   - Mengambil hanya metadata berdensitas tinggi (`Title`, `Abstract`, `User Notes/Tags`) secara instan dari SQLite Zotero (~3.000 token untuk 10–15 paper) tanpa membuka file PDF fisik.
+   - Fitur ini secara eksplisit berada di luar cakupan Core MVP dan dievaluasi setelah stabilitas single-paper tercapai.
 
-### C. Local Agent Bridge (Hermes Integration)
-- Memanfaatkan internal server Zotero (`port 23119` atau `23125`) untuk mengekspos endpoint JSON ringan:
-  * `GET /agent-bridge/active`: Mengembalikan judul, kunci item, halaman aktif, dan teks yang sedang dibaca pengguna.
-  * `POST /agent-bridge/annotate`: Memungkinkan Hermes Agent menuliskan catatan/ringkasan langsung ke dalam PDF Zotero.
-- Menjadikan Zotero dapat diawasi dan dibantu secara otomatis oleh Hermes Agent saat riset mandiri.
+### C. Local Agent Bridge (Hermes Integration — Spesifikasi Usulan)
+- Memanfaatkan internal server Zotero (port default `23119` atau port terkonfigurasi, misal `23125`) dengan rute terpadu yang diusulkan (*proposed, not implemented*):
+  * `GET /agent-bridge/active` (Proposed Read-Only): Mengembalikan judul, kunci item, halaman aktif, dan teks seleksi pengguna. Wajib menggunakan autentikasi token opt-in.
+  * `POST /agent-bridge/annotate` (Proposed Future Write / Non-MVP): Diusulkan untuk penulisan catatan ke PDF; ditunda ke fase lanjutan dan mewajibkan validasi izin pengguna (*consent*) serta jaminan idempotensi.
+- Memungkinkan Zotero dipantau secara aman oleh ekosistem agen eksternal tanpa risiko modifikasi data tanpa izin.
 
 ### D. ZotLit & Obsidian Protocol Interoperability
-- Mengadopsi standar `@zotlit/protocol`:
-  * Menggunakan skema URI permanen: `zotero://open-pdf/library/items/<ATTACHMENT_KEY>?page=<PAGE>` dan `obsidian://zotlit/open?...`.
-  * Mengekspor catatan diskusi ke Vault Obsidian dengan frontmatter resmi ZotLit (`zt-item-key: "<KEY>"`), sehingga otomatis tertaut dua arah dengan Literature Note utama.
+- Mengadopsi integrasi Obsidian melalui ZotLit (versi target dipin melalui compatibility spike):
+  * Menggunakan skema URI permanen: `zotero://open-pdf/library/items/<ATTACHMENT_KEY>?page=<PAGE>` (untuk personal library). Varian group library belum terverifikasi — format final dipin lewat Spike 3 sebelum dipakai di ekspor.
+  * Mengekspor catatan diskusi ke Vault Obsidian dengan frontmatter yang kompatibel (`zotero-key` untuk ZotLit v2 — `zt-item-key` adalah nama modul internal `@zotlit/db`, bukan key frontmatter).
+  * Ekspor catatan wajib menjaga integritas catatan eksisting dan identitas library pengguna.
 
 ---
 
 ## 4. Stack & Environment
 - **Target Host**: Zotero 7.0+ (TypeScript, ES Modules, WebExtensions + XPCOM).
-- **LLM Gateway**: 9router local server (`http://localhost:8080/v1` atau port aktif).
-- **External AI Harness**: Hermes Agent (Desktop / CLI tools).
-- **Knowledge Vault**: Obsidian + ZotLit plugin.
+- **LLM Gateway**: 9router gateway (port terkonfigurasi via `Zotero.Prefs`; di mesin ini `http://127.0.0.1:20128/v1` — port `8080` tidak listening; gateway dapat merutekan ke runtime model lokal atau upstream API).
+- **External AI Harness**: Hermes Agent (Desktop / CLI tools; integrasi read-only bertoken terlebih dahulu).
+- **Knowledge Vault**: Obsidian + ZotLit plugin (versi target dipin via spike).
 - **Test Runner**: Node.js 24 native test runner (`node --experimental-strip-types --test`).
+- **Build Pipeline**: `scripts/build.js` memaketkan ekstensi `.xpi` (dalam rencana perbaikan Gate 1).
+- **Lifecycle & Memory Guardrail**: Wajib membatalkan seluruh event listener dan endpoint server pada `shutdown()`.
 
 ---
 
