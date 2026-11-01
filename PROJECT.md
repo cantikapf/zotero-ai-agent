@@ -2,7 +2,7 @@
 
 **Project**: `zotero-ai-agent`  
 **Current Phase**: Gate 3 complete except the two checks that need the user's vault and GitHub account (Tasks 3.1, 3.1b, 3.1c, 3.1d, 3.2, 3.3, 3.4 done; Gate 2 tasks 2.1–2.5 done)
-**Last Updated**: 2026-11-01 (add-on 0.7.5 — panel Stop button + cancellation, Task 3.3 profiling measured, Task 3.4 LICENSE/updates.json)
+**Last Updated**: 2026-11-01 (add-on 0.7.6 — panel Stop button + cancellation, Task 3.3 measured, Task 3.4 published to GitHub)
 
 ---
 
@@ -53,12 +53,12 @@
 - Write-capable bridge / autonomous annotation injection (deferred to Gate 3+).
 - Automated background synchronization to Obsidian vault (manual export only).
 
-- [x] **Task 2.1: Lifecycle & Reader Event Hook** — DONE (code complete; re-verified 2026-11-01 on 0.7.5)
+- [x] **Task 2.1: Lifecycle & Reader Event Hook** — DONE (code complete; re-verified 2026-11-01 on 0.7.6)
   - Implement `src/bootstrap.ts` and `src/reader.ts` using verified APIs from Spike 1 & 2.
   - `shutdown()` deletes both server endpoints, drops the reader listener by plugin ID, removes the panel + toolbar button from every live reader document, removes the Tools item from every main window, and clears the bridge session (src/bootstrap.ts:599).
   - Selection listeners inside the PDF.js iframe cannot be detached from chrome, so `shutdown()` neutralizes them instead (`window.__zaaSelDisabled = true`); the flag is checked by the handler before it does anything.
   - *Verification (Unit Test, executed)*: `tests/test_reader.test.js` + `tests/test_highlights.test.js` cover session tracking, restored-reader injection, and the two-tier selection read.
-  - *Verification (live, executed 2026-11-01)*: six restart cycles on 0.7.5 plus one disable/enable pair through `extensions.json`. After each start the bridge answers `200`, the probe route is `404`, and no `already registered` error appears in the log — i.e. the endpoint is registered once, not duplicated.
+  - *Verification (live, executed 2026-11-01)*: six restart cycles on 0.7.6 plus one disable/enable pair through `extensions.json`. After each start the bridge answers `200`, the probe route is `404`, and no `already registered` error appears in the log — i.e. the endpoint is registered once, not duplicated.
   - *Still open*: the "disable/enable 5× in one session without restart" variant cannot be driven from outside the add-on — `AddonManager` toggling runs `shutdown()`, which removes the very endpoint that would report the result. The restart evidence above is the honest substitute.
 - [x] **Task 2.2: Streaming LLM Client Integration** — DONE (code complete; cancellation added 0.7.5)
   - Implement streaming completion with 9router/OpenAI-compatible endpoints (`/v1/chat/completions`).
@@ -139,7 +139,7 @@
   - *Verification (Unit Test, executed)*: `npm test` → **164 pass / 0 fail**. New cases cover the glued-line split, the missing-heading case, shared-surname disambiguation, dropping unknown citations, all three citation shapes, and empty-list rendering.
   - *Verification (live, executed on Zotero 7 with the real paper)*: `POST /agent-bridge/chat` returned `references: 4` and the answer ended with `**References cited from this paper**` listing Buckley & Casson (1976), Hennart & Verbeke (2022), Rugman (1981) and Verbeke & Lee (2022) in full with venues — the four works the paper cites on p. 4.
   - *Panel bug fixed on the way*: `doExport`/`doAsk` rendered the raw stream and only fell back to `result.answer` when the stream was empty, so the corrected answer (markers stripped, reference list appended) never reached the panel — it showed up only over the HTTP route. The panel now always renders `result.answer` (src/ui.ts).
-- [x] **Task 3.3: Empirical Performance Profiling** — DONE (2026-11-01, add-on 0.7.5)
+- [x] **Task 3.3: Empirical Performance Profiling** — DONE (2026-11-01, add-on 0.7.6)
   - *Method*: A/B on the same machine and the same profile, identical protocol both times — restart Zotero, wait 150 s for the post-startup warm-up to settle, then three CPU samples of 30 s each taken from `Get-Process zotero.CPU` (total processor seconds, 8 logical CPUs) plus `WorkingSet64` of the main process. Add-on off/on is the only variable.
   - *Footprint, measured*: baseline (add-on disabled) **251 / 251 / 255 MB**, idle **3.33 / 3.02 / 3.23 %**; with the add-on **385 / 385 / 388 MB**, idle **3.33 / 2.71 / 3.31 %**. Idle CPU delta is inside sample noise; the memory delta is **~134 MB**, which **misses the < 30 MB target** and is not a measurement artifact — see the caveat below.
   - *Latency, measured*: `GET /agent-bridge/active` (Zotero-side work only) **117–141 ms**. `POST /agent-bridge/chat` end-to-end **4.6–5.5 s** to first byte, of which the local gateway alone answers `/v1/models` in **0.69–1.08 s** and then takes a further 3–4 s to produce the first token — i.e. the time is the remote model, not the add-on. The `< 400 ms` figure in the roadmap was never an end-to-end latency target for a remote completion; the honest statement is **~130 ms of plugin overhead per bridge call**.
@@ -147,17 +147,18 @@
   - *Caveat*: Working set moves with GC pressure even at idle (245 MB → 385 MB across restarts of the same build), so the absolute MB delta is a range, not a constant. The stable signals are: CPU is unchanged at idle, and the plugin adds no repeating timer of its own (the only `setInterval` is the panel's 1.2 s selection poll, and it exists only while the panel is open — `src/ui.ts:274`).
   - *Still open*: `about:memory` inside Zotero was not used (no automation path to it), so this is OS-level working set, not a heap breakdown.
 - [x] **Task 3.4: Packaging & Release Preparation** — DONE for everything that does not need the user's account (2026-11-01)
-  - Build installable `.xpi` bundle for Zotero 7 — `npm run build` stages `manifest.json` + bundled `bootstrap.js` + `addon/` assets into `build/zotero-ai-agent-<version>.xpi` (74 KB at 0.7.5). Install verified on a live profile six times this pass.
-  - `LICENSE` (MIT, matching `package.json`) and `updates.json` (0.7.5 entry pointing at the GitHub release asset) now exist in the repo root. Signing is deliberately absent: Zotero installs an unsigned `.xpi` on a beta profile, and an unverifiable signature would be worse than none.
-  - *Still open*: the repository has **no git remote**, so `manifest.json`'s `update_url` (`https://raw.githubusercontent.com/cantikapf/zotero-ai-agent/main/updates.json`) resolves nowhere and `updates.json` is a file no client can fetch. Publishing needs the user's GitHub identity: `gh repo create cantikapf/zotero-ai-agent --public --source=. --push`, then a `v0.7.5` release with the `.xpi` attached.
+  - Build installable `.xpi` bundle for Zotero 7 — `npm run build` stages `manifest.json` + bundled `bootstrap.js` + `addon/` assets into `build/zotero-ai-agent-<version>.xpi` (74 KB core bundle; 24 KB total xpi at 0.7.6). Install verified on a live profile six times this pass.
+  - `LICENSE` (MIT, matching `package.json`) and `updates.json` (0.7.6 entry pointing at the GitHub release asset) now exist in the repo root. Signing is deliberately absent: Zotero installs an unsigned `.xpi` on a beta profile, and an unverifiable signature would be worse than none.
+  - Release channel is live: repository `github.com/cantikapf/zotero-ai-agent` (branch `master`, default), tag `v0.7.6` with the `.xpi` attached. Verified end-to-end — published `manifest.json` → `update_url` → `updates.json` (`advertised 0.7.6`) → release asset opens as a valid zip whose `update_url` matches; asset digest equals the local build byte-for-byte.
+  - *Still open*: `update_url` uses `master` because that is the branch this repo has; if the default branch is ever renamed to `main`, `manifest.json` must change with it (a 404 there fails silently — an add-on simply stops checking for updates).
   - *Verification (Manual Test, executed)*: fresh-profile installation path (kill Zotero → copy `.xpi` into `extensions/` → patch `extensions.json` version/active → start) succeeds repeatedly; `GET /agent-bridge/active` → `200` after every start.
 
 ---
 
 ## 2. Active Focus & Blocker Log
 
-- **Active Focus**: Gate 2 and Gate 3 are closed for everything that does not require the user's own accounts. 0.7.5 adds a Stop button (cancellation as a plain token, because Zotero's bootstrap sandbox has no `AbortController`), and 3.3 finally has measured numbers: idle CPU is unchanged, plugin latency is ~130 ms, and the memory target (< 30 MB) is **missed** — measured ~134 MB with the panel mounted. Baseline: 169 tests pass, `tsc --noEmit` clean, build 0.7.5.
-- **Next, if continued**: shrink the panel's per-reader footprint (the 134 MB is DOM + PDF view instantiation, not the 74 KB bundle) before publishing; then `gh repo create` + a `v0.7.5` release with the `.xpi` attached so `update_url` resolves.
+- **Active Focus**: Gate 2 and Gate 3 are closed for everything that does not require the user's own accounts. 0.7.6 adds a Stop button (cancellation as a plain token, because Zotero's bootstrap sandbox has no `AbortController`) and publishes the release channel; 3.3 finally has measured numbers: idle CPU unchanged, plugin latency ~130 ms, memory target (< 30 MB) **missed** at ~134 MB with the panel mounted. Baseline: 169 tests pass, `tsc --noEmit` clean, build 0.7.6.
+- **Next, if continued**: (a) shrink the panel's per-reader footprint — the ~134 MB is DOM + PDF view instantiation, not the 74 KB core bundle, so the fix is a narrower panel that mounts lazily; (b) manual disable/enable 5× from Tools → Add-ons to close blocker 2; (c) the Obsidian click-through check, which needs the user's vault with ZotLit installed.
 - **Resolved this pass (2026-10-27)**:
   1. *Build Pipeline* — `scripts/build.js` now exists and produces a real `.xpi` (`npm run build` exit 0).
   2. *Typecheck Environment* — `npm install` run; `tsc --noEmit` exit 0.
@@ -175,5 +176,5 @@
   2. *Relaunch-time listener coverage*: `startup()` registers `renderToolbar` and sweeps `Zotero.Reader._readers`, verified over six restarts on 0.7.5 (bridge `200`, no duplicate endpoint after each). The unchecked variant is disable/enable 5× *within* one session — `AddonManager` toggling runs `shutdown()`, which deletes the endpoint that would report the result, so it cannot be driven from outside. Doing it by hand in Tools → Add-ons is the only honest test.
   3. *`obsidian://zotlit/open` link shape untested*: unlike the `zotero://` side (pinned to the protocol handler), the Obsidian URI with `item` + install-specific `source-id` is unverified, so the export ships only the `zotero://` deep link. The managed region question is answered: exports stay **outside** `%%zt-managed%%`.
   4. *Memory target missed (measured, not estimated)*: idle CPU is unchanged (3.3 % both ways) and plugin latency is ~130 ms, but working set grows ~134 MB with the add-on enabled (251 → 385 MB). The bundle is 74 KB, so the cost is the reader panel + PDF view path, not the code. Either state the real target or shrink the panel — see Task 3.3 for numbers.
-  5. *No release channel*: repo still has no git remote, so `manifest.json`'s `update_url` resolves nowhere even though `updates.json` and `LICENSE` now exist. Publishing needs the user's GitHub identity.
+  5. *Update channel depends on the branch name*: `updates.json` and `v0.7.6` are published, and the chain manifest → updates → asset verifies. It breaks silently if the default branch is renamed to `main` (raw URL 404 → Zotero stops checking for updates), or if a new version ships without bumping both `updates.json` and the release tag.
   6. *Task 1.6 write-endpoint contract still prose*: the read routes are documented in Task 1.6, but the deferred `POST /agent-bridge/annotate` (consent + idempotency) exists only as a plan in HERMES.md/README.md.
