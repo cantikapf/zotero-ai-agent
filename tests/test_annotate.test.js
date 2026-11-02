@@ -14,6 +14,7 @@ import {
   saveAnswerAsNote,
   homeItemFor
 } from "../src/annotate.ts";
+import { SELECTION_MAX_AGE_MS } from "../src/reader.ts";
 
 /** Reader window whose eval() runs the real snippet against a fake pdf_view. */
 function fakeReader(ranges, stored) {
@@ -163,6 +164,19 @@ describe("highlightSelection", () => {
     const result = highlightSelection("answer");
     assert.deepEqual(result, { ok: false, error: "Select text in the PDF first" });
     assert.equal(savedReader.calls.added.length, 0);
+  });
+
+  it("expires the snapshot on the same clock the panel uses", () => {
+    // The highlight path and the panel's selection note read different fields of the same
+    // tracked selection. If they disagree about its age, the panel can promise a selection the
+    // button then refuses to save (or worse, save one the panel stopped showing).
+    savedReader = fakeReader([], { t: Date.now() - SELECTION_MAX_AGE_MS - 1_000, ann: { ...RANGE } });
+    Zotero.Reader._readers[0]._iframeWindow.wrappedJSObject = savedReader.win;
+    assert.equal(highlightSelection("a").ok, false);
+
+    savedReader = fakeReader([], { t: Date.now() - SELECTION_MAX_AGE_MS + 5_000, ann: { ...RANGE } });
+    Zotero.Reader._readers[0]._iframeWindow.wrappedJSObject = savedReader.win;
+    assert.equal(highlightSelection("a").ok, true);
   });
 
   it("refuses a collapsed selection instead of creating an empty highlight", () => {

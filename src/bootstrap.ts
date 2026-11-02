@@ -6,7 +6,7 @@
 import { ACTIVE_SESSION_PATH, AgentBridgeServer, CHAT_PATH } from "./bridge.js";
 import { answerFromSession } from "./chat.js";
 import { DEFAULT_CONFIG, buildViewportPrompt, streamChatCompletion } from "./llm.js";
-import { getReaderContext } from "./reader.js";
+import { SELECTION_MAX_AGE_MS, getReaderContext } from "./reader.js";
 import { BUTTON_ID, PANEL_ID, createPanel, createToolbarButton } from "./ui.js";
 import {
   addCommentToAnnotation,
@@ -373,7 +373,9 @@ function selectedTextNow(): string {
           if (live) return live;
         }
         let stored = window.__zaaLastSelection;
-        return stored && stored.text && Date.now() - stored.t < 300000 ? String(stored.text) : "";
+        return stored && stored.text && Date.now() - stored.t < ${SELECTION_MAX_AGE_MS}
+          ? String(stored.text)
+          : "";
       })()`) || ""
     ).trim();
   } catch {

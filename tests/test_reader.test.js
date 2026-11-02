@@ -101,7 +101,8 @@ describe("readPageSnapshot", () => {
     assert.ok(code.indexOf("__zaaLastSelection") < code.indexOf("window.getSelection"));
     assert.ok(code.indexOf("window.getSelection") < code.indexOf("contentWindow.getSelection"));
     // A remembered selection older than the freshness window must not be offered as context.
-    assert.match(code, /Date\.now\(\) - stored\.t < 120000/);
+    assert.match(code, /Date\.now\(\) - stored\.t < SELECTION_MAX_AGE/);
+    assert.match(code, /let SELECTION_MAX_AGE = 300000;/);
     // Zotero's own selection ranges win: same text a highlight would store, survives focus loss.
     assert.match(code, /_reader\._lastView/);
     assert.match(code, /_selectionRanges/);

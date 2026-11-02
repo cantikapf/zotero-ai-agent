@@ -23,6 +23,15 @@
 
 declare const Zotero: any;
 
+import { SELECTION_MAX_AGE_MS } from "./reader.ts";
+
+/**
+ * The tracker stores two things about one selection: its text and the annotation JSON. Both
+ * expire on the same clock, so "the panel still shows a selection" and "the highlight button can
+ * still save it" can never disagree.
+ */
+const ANNOTATION_MAX_AGE_MS = SELECTION_MAX_AGE_MS;
+
 /** Same default as Zotero's highlight tool: a yellow marker. */
 export const DEFAULT_HIGHLIGHT_COLOR = "#ffd400";
 
@@ -140,7 +149,7 @@ export function highlightSelection(comment: string, color = DEFAULT_HIGHLIGHT_CO
         // selection tracker captured while the ranges were still live (bounded age).
         let annotation = null;
         let stored = window.__zaaLastAnnotation;
-        if (stored && stored.ann && Date.now() - stored.t < 300000) {
+        if (stored && stored.ann && Date.now() - stored.t < ${ANNOTATION_MAX_AGE_MS}) {
           annotation = JSON.parse(JSON.stringify(stored.ann));
         }
         if (!annotation) {

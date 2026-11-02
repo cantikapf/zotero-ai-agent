@@ -26,6 +26,19 @@ declare const Zotero: any;
 /** Page excerpt budget handed to the LLM; the prompt builder caps again at MAX_CONTEXT_CHARS. */
 export const MAX_PAGE_CHARS = 8000;
 
+/**
+ * How long a remembered selection stays authoritative, in ms.
+ *
+ * Single source of truth: the tracker writes `__zaaLastSelection`, and every reader of it (this
+ * snapshot, the panel's selection note, the highlight/note save paths in bootstrap.ts) judges it
+ * with this one number. They used to disagree — 120 s here, 300 s there — so between minute 2 and
+ * minute 5 the bridge reported no selection while an answer still carried the old text.
+ *
+ * ponytail: 5 minutes, not a pref. It is long enough to open the panel and type a question, short
+ * enough that yesterday's selection cannot silently attach itself to today's answer.
+ */
+export const SELECTION_MAX_AGE_MS = 300_000;
+
 export interface PageSnapshot {
   pageNumber: number;
   totalPages: number;
@@ -125,7 +138,12 @@ async function readFromReaderWindow(reader: any, body: string): Promise<PageSnap
 export function readPageSnapshot(reader: any): Promise<PageSnapshot | null> {
   return readFromReaderWindow(
     reader,
+    // One freshness window for every consumer of the remembered selection. The tracker (in
+    // bootstrap.ts) is the only writer; this snapshot, the panel note and the save paths all
+    // judge the same copy with the same age, so they cannot disagree about whether a selection
+    // is still in play.
     `
+    let SELECTION_MAX_AGE = ${SELECTION_MAX_AGE_MS};
     let app = PDFViewerApplication;
     let pageNumber = app.pdfViewer.currentPageNumber;
     let totalPages = app.pdfViewer.pagesCount;
@@ -157,7 +175,7 @@ export function readPageSnapshot(reader: any): Promise<PageSnapshot | null> {
     if (!selection) {
       try {
         let stored = window.__zaaLastSelection;
-        if (stored && stored.text && Date.now() - stored.t < 120000) {
+        if (stored && stored.text && Date.now() - stored.t < SELECTION_MAX_AGE) {
           selection = String(stored.text);
           source = "remembered";
         }
