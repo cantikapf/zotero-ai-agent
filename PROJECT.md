@@ -2,7 +2,7 @@
 
 **Project**: `zotero-ai-agent`  
 **Current Phase**: Gate 3 complete. Every blocker that needed the user's own vault and GitHub account is now verified (2026-11-02) — see Open Blockers 1–3.
-**Last Updated**: 2026-11-01 (add-on 0.7.6 — panel Stop button + cancellation, Task 3.3 measured, Task 3.4 published to GitHub)
+**Last Updated**: 2026-11-02 (Obsidian/ZotLit interop verified live; blockers 1–3 closed)
 
 ---
 
