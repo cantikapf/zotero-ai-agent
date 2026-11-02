@@ -1,7 +1,7 @@
 # PROJECT.md — Roadmap & State Machine
 
 **Project**: `zotero-ai-agent`  
-**Current Phase**: Gate 3 complete except the two checks that need the user's vault and GitHub account (Tasks 3.1, 3.1b, 3.1c, 3.1d, 3.2, 3.3, 3.4 done; Gate 2 tasks 2.1–2.5 done)
+**Current Phase**: Gate 3 complete. Every blocker that needed the user's own vault and GitHub account is now verified (2026-11-02) — see Open Blockers 1–3.
 **Last Updated**: 2026-11-01 (add-on 0.7.6 — panel Stop button + cancellation, Task 3.3 measured, Task 3.4 published to GitHub)
 
 ---
@@ -173,9 +173,14 @@
   10. *Phantom manifest icon* — `manifest.json` declared `addon/icon-48.png` while `addon/` is empty; entry removed until a real icon exists.
   11. *Dangling bridge route* — the handler accepted `/agent/active` as well as the documented `/agent-bridge/active`; unified to one exported `ACTIVE_SESSION_PATH`.
 - **Open Blockers & Known Issues**:
-  1. *Obsidian click-through unverified*: the exported note is written and pinned, but opening it in a real vault with ZotLit installed (does `zotero://` open the PDF at the page; does ZotLit refuse to adopt a `zotero-key` it did not create) is a manual check that needs the user's vault.
-  2. *Relaunch-time listener coverage*: `startup()` registers `renderToolbar` and sweeps `Zotero.Reader._readers`, verified over six restarts on 0.7.5 (bridge `200`, no duplicate endpoint after each). The unchecked variant is disable/enable 5× *within* one session — `AddonManager` toggling runs `shutdown()`, which deletes the endpoint that would report the result, so it cannot be driven from outside. Doing it by hand in Tools → Add-ons is the only honest test.
-  3. *`obsidian://zotlit/open` link shape untested*: unlike the `zotero://` side (pinned to the protocol handler), the Obsidian URI with `item` + install-specific `source-id` is unverified, so the export ships only the `zotero://` deep link. The managed region question is answered: exports stay **outside** `%%zt-managed%%`.
+  1. *Obsidian interop — VERIFIED live (2026-11-02, vault `D:\Research`, ZotLit 2.0.x, `source-id b6f67231`)*:
+     - `zotero://open-pdf/library/items/B5NKI9K6?page=9` moved the reader from page **4 → 9** (read back through `/agent-bridge/active`, so it is measured, not assumed).
+     - ZotLit **adopts** a foreign `zotero-key`: `obsidian://zotlit/update?item=4660&source-id=b6f67231&scope=metadata` rewrote `AI Discussions - HCS9BRGQ.md` instead of refusing it, and the rewrite touched **frontmatter only** — it added `related`, `collections`, `citekey: kanoSuccessFailureFamily2025` and unquoted the key, while every discussion heading and body survived byte-identical.
+     - Appending to the adopted note preserves that frontmatter (`zotero-key`, `citekey`, `collections` all intact) and the identity guard still passes, because ZotLit writes `zotero-key` unquoted and `readFrontmatter` strips quotes.
+     - *Why it is safe*: ZotLit's own update path (`main.js`, `z3t`) compares `frontmatter['zotero-key']` against the item it is updating and aborts with `literature-note-key-changed` on a mismatch. A note whose key matches is adoptable by design; one that names a different item is refused on their side as well as ours.
+     - *Still open*: the `%%zt-managed%%` region never appeared because the note was never generated from a ZotLit template — untested whether a template-generated note behaves the same. The export writes no managed region at all, so this only matters if a user points the export at a note ZotLit created.
+  2. *Relaunch-time and toggle listener coverage — VERIFIED (2026-11-02)*: six restarts on 0.7.5 plus the user's manual **disable/enable 5×** in Tools → Add-ons on 0.7.6. After the toggles `/agent-bridge/active` still answers `200` with no duplicate-endpoint error, so `shutdown()` unregisters and `startup()` re-registers cleanly. Closed.
+  3. *`obsidian://zotlit/open` link shape*: the URI is `obsidian://zotlit/<action>?item=<integer itemID>&source-id=<8 hex>&scope=full|metadata`; `source-id` is `djb2(pathToFileURL(profileDir) + NUL + pathToFileURL(dataDir))` as 8 hex chars, i.e. install-specific. Verified by driving `obsidian://zotlit/update` with it. The export still ships only `zotero://` on purpose: a `source-id` is per-install, so an exported link carrying it breaks the moment the vault moves, and the `zotero://` link has no such binding.
   4. *Memory is within target (re-measured 2026-11-02)*: same-session A/B gives **+30 MB private commit** and **+10 MB working set** — the earlier ~134 MB reading was a cross-session artifact, retracted in Task 3.3. `< 30 MB` holds at the boundary, so there is no memory work queued unless the panel grows.
   5. *Update channel depends on the branch name*: `updates.json` and `v0.7.6` are published, and the chain manifest → updates → asset verifies. It breaks silently if the default branch is renamed to `main` (raw URL 404 → Zotero stops checking for updates), or if a new version ships without bumping both `updates.json` and the release tag.
   6. *Task 1.6 write-endpoint contract still prose*: the read routes are documented in Task 1.6, but the deferred `POST /agent-bridge/annotate` (consent + idempotency) exists only as a plan in HERMES.md/README.md.
